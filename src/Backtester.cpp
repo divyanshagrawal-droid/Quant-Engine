@@ -72,6 +72,38 @@ BacktestResult runBacktest(
             entryTime.clear();
         }
     }
+    // Close any position that is still open at the end
+// of the historical data.
+if (inPosition && !candles.empty()) {
+
+    const Candle& finalCandle = candles.back();
+
+    const double exitPrice = finalCandle.close;
+
+    const double profitLoss =
+        (exitPrice - entryPrice) * quantity;
+
+    Trade trade;
+
+    trade.entryTime = entryTime;
+    trade.exitTime = finalCandle.timestamp;
+
+    trade.entryPrice = entryPrice;
+    trade.exitPrice = exitPrice;
+
+    trade.quantity = quantity;
+    trade.profitLoss = profitLoss;
+
+    result.trades.push_back(trade);
+
+    result.finalCapital += profitLoss;
+
+    // Position is now closed.
+    inPosition = false;
+    quantity = 0.0;
+    entryPrice = 0.0;
+    entryTime.clear();
+}
 
     result.totalProfitLoss =
         result.finalCapital - result.initialCapital;
