@@ -19,15 +19,18 @@ int main() {
         constexpr std::size_t slowPeriod = 3;
 
         constexpr double initialCapital = 100000.0;
+        constexpr double tradingFeeRate = 0.001;
+        constexpr double slippageRate = 0.0005;
 
         const BacktestResult result =
             runBacktest(
-                candles,
-                fastPeriod,
-                slowPeriod,
-                initialCapital
-            );
-
+            candles,
+            fastPeriod,
+            slowPeriod,
+            initialCapital,
+            tradingFeeRate,
+            slippageRate
+        );
         std::cout << std::fixed
                   << std::setprecision(2);
 

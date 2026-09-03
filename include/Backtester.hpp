@@ -28,5 +28,7 @@ BacktestResult runBacktest(
     const std::vector<Candle>& candles,
     std::size_t fastPeriod,
     std::size_t slowPeriod,
-    double initialCapital
+    double initialCapital,
+    double tradingFeeRate,
+    double slippageRate
 );
