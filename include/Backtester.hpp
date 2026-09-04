@@ -23,12 +23,18 @@ struct Trade {
     double profitLoss{};
 };
 
+struct EquityPoint {
+    std::string timestamp;
+    double equity{};
+};
+
 struct BacktestResult {
     double initialCapital{};
     double finalCapital{};
     double totalProfitLoss{};
 
     std::vector<Trade> trades;
+    std::vector<EquityPoint> equityCurve;
 };
 
 BacktestResult runBacktest(
