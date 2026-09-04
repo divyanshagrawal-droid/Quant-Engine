@@ -56,25 +56,43 @@ int main() {
 
             std::cout << "Trade " << i + 1 << '\n';
 
-            std::cout << "  Entry : "
-                      << trade.entryTime
-                      << " @ "
-                      << trade.entryPrice
-                      << '\n';
+        std::cout << "  Entry       : "
+          << trade.entryTime
+          << " @ "
+          << trade.entryPrice
+          << '\n';
 
-            std::cout << "  Exit  : "
-                      << trade.exitTime
-                      << " @ "
-                      << trade.exitPrice
-                      << '\n';
+        std::cout << "  Exit        : "
+          << trade.exitTime
+          << " @ "
+          << trade.exitPrice
+          << '\n';
 
-            std::cout << "  Qty   : "
-                      << trade.quantity
-                      << '\n';
+        std::cout << "  Quantity    : "
+          << trade.quantity
+          << '\n';
 
-            std::cout << "  P&L   : "
-                      << trade.profitLoss
-                      << "\n\n";
+        std::cout << "  Entry Fee   : "
+          << trade.entryFee
+          << '\n';
+
+        std::cout << "  Exit Fee    : "
+          << trade.exitFee
+          << '\n';
+
+        std::cout << "  Gross P&L   : "
+          << trade.grossProfitLoss
+          << '\n';
+
+        std::cout << "  Total Fees  : "
+          << trade.totalFees
+          << '\n';
+
+        std::cout << "  Net P&L     : "
+          << trade.profitLoss
+          << "\n\n";
+
+            
         }
     }
     catch (const std::exception& e) {

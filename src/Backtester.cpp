@@ -20,6 +20,7 @@ BacktestResult runBacktest(
 
     double quantity = 0.0;
     double entryPrice = 0.0;
+    double entryFee = 0.0;
 
     std::string entryTime;
 
@@ -40,21 +41,24 @@ BacktestResult runBacktest(
 
             const double marketPrice = candles[i].close;
 
-            // Buying suffers positive slippage.
+            // Positive slippage when buying.
             entryPrice =
                 marketPrice * (1.0 + slippageRate);
 
             entryTime = candles[i].timestamp;
 
-            // Fee is charged on the purchase.
-            const double entryFee =
-                result.finalCapital * tradingFeeRate;
-
-            const double capitalAfterFee =
-                result.finalCapital - entryFee;
-
+            // Use available capital while reserving
+            // enough money for the entry fee.
             quantity =
-                capitalAfterFee / entryPrice;
+                result.finalCapital /
+                (entryPrice * (1.0 + tradingFeeRate));
+
+            // Actual entry fee.
+            const double entryValue =
+                entryPrice * quantity;
+
+            entryFee =
+                entryValue * tradingFeeRate;
 
             inPosition = true;
         }
@@ -66,25 +70,28 @@ BacktestResult runBacktest(
 
             const double marketPrice = candles[i].close;
 
-            // Selling suffers negative slippage.
+            // Negative slippage when selling.
             const double exitPrice =
                 marketPrice * (1.0 - slippageRate);
 
-            const double grossProceeds =
+            const double exitValue =
                 exitPrice * quantity;
 
-            // Fee is charged on the sale.
+            // Exit fee.
             const double exitFee =
-                grossProceeds * tradingFeeRate;
+                exitValue * tradingFeeRate;
 
-            const double netProceeds =
-                grossProceeds - exitFee;
+            // Price movement only, before fees.
+            const double grossProfitLoss =
+                (exitPrice - entryPrice) * quantity;
 
-            const double investedCapital =
-                entryPrice * quantity;
+            // Total trading costs.
+            const double totalFees =
+                entryFee + exitFee;
 
+            // Final trade result.
             const double profitLoss =
-                netProceeds - investedCapital;
+                grossProfitLoss - totalFees;
 
             Trade trade;
 
@@ -95,47 +102,61 @@ BacktestResult runBacktest(
             trade.exitPrice = exitPrice;
 
             trade.quantity = quantity;
+
+            trade.entryFee = entryFee;
+            trade.exitFee = exitFee;
+
+            trade.grossProfitLoss = grossProfitLoss;
+            trade.totalFees = totalFees;
             trade.profitLoss = profitLoss;
 
             result.trades.push_back(trade);
 
+            // Update portfolio capital.
             result.finalCapital += profitLoss;
 
             inPosition = false;
+
             quantity = 0.0;
             entryPrice = 0.0;
+            entryFee = 0.0;
+
             entryTime.clear();
         }
     }
 
     // ======================================================
-    // FIX:
     // Close any position still open at the end of the data.
     // ======================================================
     if (inPosition && !candles.empty()) {
 
         const Candle& finalCandle = candles.back();
 
-        const double marketPrice = finalCandle.close;
+        const double marketPrice =
+            finalCandle.close;
 
-        // Selling suffers negative slippage.
+        // Negative slippage when selling.
         const double exitPrice =
             marketPrice * (1.0 - slippageRate);
 
-        const double grossProceeds =
+        const double exitValue =
             exitPrice * quantity;
 
+        // Exit fee.
         const double exitFee =
-            grossProceeds * tradingFeeRate;
+            exitValue * tradingFeeRate;
 
-        const double netProceeds =
-            grossProceeds - exitFee;
+        // Price movement only, before fees.
+        const double grossProfitLoss =
+            (exitPrice - entryPrice) * quantity;
 
-        const double investedCapital =
-            entryPrice * quantity;
+        // Total trading costs.
+        const double totalFees =
+            entryFee + exitFee;
 
+        // Final trade result.
         const double profitLoss =
-            netProceeds - investedCapital;
+            grossProfitLoss - totalFees;
 
         Trade trade;
 
@@ -146,6 +167,12 @@ BacktestResult runBacktest(
         trade.exitPrice = exitPrice;
 
         trade.quantity = quantity;
+
+        trade.entryFee = entryFee;
+        trade.exitFee = exitFee;
+
+        trade.grossProfitLoss = grossProfitLoss;
+        trade.totalFees = totalFees;
         trade.profitLoss = profitLoss;
 
         result.trades.push_back(trade);
@@ -153,8 +180,11 @@ BacktestResult runBacktest(
         result.finalCapital += profitLoss;
 
         inPosition = false;
+
         quantity = 0.0;
         entryPrice = 0.0;
+        entryFee = 0.0;
+
         entryTime.clear();
     }
 

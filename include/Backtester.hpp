@@ -3,6 +3,7 @@
 #include "Candle.hpp"
 
 #include <cstddef>
+#include <string>
 #include <vector>
 
 struct Trade {
@@ -13,6 +14,12 @@ struct Trade {
     double exitPrice{};
 
     double quantity{};
+
+    double entryFee{};
+    double exitFee{};
+
+    double grossProfitLoss{};
+    double totalFees{};
     double profitLoss{};
 };
 
