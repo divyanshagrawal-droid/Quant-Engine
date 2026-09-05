@@ -136,6 +136,13 @@ int main() {
                       << trade.profitLoss
                       << "\n\n";
         }
+            std::cout << "Maximum Drawdown : "
+          << result.maximumDrawdown
+          << '\n';
+
+            std::cout << "Maximum Drawdown % : "
+          << result.maximumDrawdownPercentage
+          << "%\n";
     }
     catch (const std::exception& e) {
 

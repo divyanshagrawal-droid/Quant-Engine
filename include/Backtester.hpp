@@ -33,6 +33,9 @@ struct BacktestResult {
     double finalCapital{};
     double totalProfitLoss{};
 
+    double maximumDrawdown{};
+    double maximumDrawdownPercentage{};
+
     std::vector<Trade> trades;
     std::vector<EquityPoint> equityCurve;
 };

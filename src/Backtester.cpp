@@ -25,8 +25,9 @@ BacktestResult runBacktest(
     std::string entryTime;
 
     // =========================================================
-    // Process every candle
+    // PROCESS HISTORICAL CANDLES
     // =========================================================
+
     for (std::size_t i = 0; i < candles.size(); ++i) {
 
         const Signal signal =
@@ -38,29 +39,32 @@ BacktestResult runBacktest(
             );
 
         // =====================================================
-        // BUY: Open a new position
+        // BUY: OPEN POSITION
         // =====================================================
+
         if (signal == Signal::BUY && !inPosition) {
 
-            const double marketPrice = candles[i].close;
+            const double marketPrice =
+                candles[i].close;
 
-            // Positive slippage when buying.
+            // Buying suffers positive slippage.
             entryPrice =
                 marketPrice * (1.0 + slippageRate);
 
-            entryTime = candles[i].timestamp;
+            entryTime =
+                candles[i].timestamp;
 
-            // We use the available capital while reserving
-            // enough money to pay the entry fee.
+            // Reserve enough capital for the
+            // entry trading fee.
             quantity =
                 result.finalCapital /
                 (entryPrice * (1.0 + tradingFeeRate));
 
-            // Actual entry value.
+            // Calculate actual entry value.
             const double entryValue =
                 entryPrice * quantity;
 
-            // Actual entry fee.
+            // Calculate entry fee.
             entryFee =
                 entryValue * tradingFeeRate;
 
@@ -68,58 +72,76 @@ BacktestResult runBacktest(
         }
 
         // =====================================================
-        // SELL: Close the existing position
+        // SELL: CLOSE POSITION
         // =====================================================
+
         else if (signal == Signal::SELL && inPosition) {
 
-            const double marketPrice = candles[i].close;
+            const double marketPrice =
+                candles[i].close;
 
-            // Negative slippage when selling.
+            // Selling suffers negative slippage.
             const double exitPrice =
                 marketPrice * (1.0 - slippageRate);
 
-            // Value received from selling the position.
+            // Value received from selling.
             const double exitValue =
                 exitPrice * quantity;
 
-            // Fee charged on the sale.
+            // Exit fee.
             const double exitFee =
                 exitValue * tradingFeeRate;
 
-            // P&L caused only by price movement.
+            // Gross P&L from price movement.
             const double grossProfitLoss =
                 (exitPrice - entryPrice) * quantity;
 
-            // Total fees paid for this trade.
+            // Total trading costs.
             const double totalFees =
                 entryFee + exitFee;
 
-            // Final net P&L.
+            // Net P&L after all fees.
             const double profitLoss =
                 grossProfitLoss - totalFees;
 
             // Store trade details.
             Trade trade;
 
-            trade.entryTime = entryTime;
-            trade.exitTime = candles[i].timestamp;
+            trade.entryTime =
+                entryTime;
 
-            trade.entryPrice = entryPrice;
-            trade.exitPrice = exitPrice;
+            trade.exitTime =
+                candles[i].timestamp;
 
-            trade.quantity = quantity;
+            trade.entryPrice =
+                entryPrice;
 
-            trade.entryFee = entryFee;
-            trade.exitFee = exitFee;
+            trade.exitPrice =
+                exitPrice;
 
-            trade.grossProfitLoss = grossProfitLoss;
-            trade.totalFees = totalFees;
-            trade.profitLoss = profitLoss;
+            trade.quantity =
+                quantity;
+
+            trade.entryFee =
+                entryFee;
+
+            trade.exitFee =
+                exitFee;
+
+            trade.grossProfitLoss =
+                grossProfitLoss;
+
+            trade.totalFees =
+                totalFees;
+
+            trade.profitLoss =
+                profitLoss;
 
             result.trades.push_back(trade);
 
-            // Update portfolio capital using net P&L.
-            result.finalCapital += profitLoss;
+            // Update portfolio capital.
+            result.finalCapital +=
+                profitLoss;
 
             // Reset position state.
             inPosition = false;
@@ -134,31 +156,28 @@ BacktestResult runBacktest(
         // =====================================================
         // EQUITY CURVE
         // =====================================================
-        //
-        // Equity = remaining cash + current market value
-        // of any open position.
-        //
-        // This avoids double-counting the position value.
-        //
-        double currentEquity = result.finalCapital;
+
+        double currentEquity =
+            result.finalCapital;
 
         if (inPosition) {
 
-            // Value of the position at the current market price.
+            // Current market value of the position.
             const double currentPositionValue =
                 candles[i].close * quantity;
 
-            // Amount of capital used to acquire the position.
+            // Amount spent when entering.
             const double entryValue =
                 entryPrice * quantity;
 
-            // Cash remaining after buying the position
-            // and paying the entry fee.
+            // Cash remaining after entry.
             const double cashRemaining =
                 result.finalCapital
                 - entryValue
                 - entryFee;
 
+            // Portfolio equity =
+            // remaining cash + current position value.
             currentEquity =
                 cashRemaining
                 + currentPositionValue;
@@ -178,12 +197,9 @@ BacktestResult runBacktest(
     }
 
     // =========================================================
-    // CLOSE OPEN POSITION AT END OF HISTORICAL DATA
+    // CLOSE POSITION AT END OF DATA
     // =========================================================
-    //
-    // If the final signal was BUY and no later SELL occurred,
-    // close the position at the final candle's market price.
-    //
+
     if (inPosition && !candles.empty()) {
 
         const Candle& finalCandle =
@@ -204,7 +220,7 @@ BacktestResult runBacktest(
         const double exitFee =
             exitValue * tradingFeeRate;
 
-        // Gross price-movement P&L.
+        // Gross P&L from price movement.
         const double grossProfitLoss =
             (exitPrice - entryPrice) * quantity;
 
@@ -216,6 +232,7 @@ BacktestResult runBacktest(
         const double profitLoss =
             grossProfitLoss - totalFees;
 
+        // Store final trade.
         Trade trade;
 
         trade.entryTime =
@@ -265,8 +282,8 @@ BacktestResult runBacktest(
 
         entryTime.clear();
 
-        // The final candle's equity should match
-        // the final realized portfolio capital.
+        // Final equity must match final capital
+        // after the position has been realized.
         if (!result.equityCurve.empty()) {
 
             result.equityCurve.back().equity =
@@ -275,12 +292,62 @@ BacktestResult runBacktest(
     }
 
     // =========================================================
-    // FINAL RESULT
+    // TOTAL P&L
     // =========================================================
 
     result.totalProfitLoss =
         result.finalCapital
         - result.initialCapital;
+
+    // =========================================================
+    // MAXIMUM DRAWDOWN
+    // =========================================================
+
+    double peakEquity =
+        result.initialCapital;
+
+    double maximumDrawdown = 0.0;
+
+    double maximumDrawdownPercentage = 0.0;
+
+    for (const auto& point : result.equityCurve) {
+
+        // Update peak equity.
+        if (point.equity > peakEquity) {
+            peakEquity =
+                point.equity;
+        }
+
+        // Calculate current drawdown.
+        const double drawdown =
+            peakEquity - point.equity;
+
+        // Update maximum drawdown in money.
+        if (drawdown > maximumDrawdown) {
+            maximumDrawdown =
+                drawdown;
+        }
+
+        // Calculate drawdown percentage.
+        if (peakEquity > 0.0) {
+
+            const double drawdownPercentage =
+                (drawdown / peakEquity) * 100.0;
+
+            if (drawdownPercentage >
+                maximumDrawdownPercentage) {
+
+                maximumDrawdownPercentage =
+                    drawdownPercentage;
+            }
+        }
+    }
+
+    result.maximumDrawdown =
+        maximumDrawdown;
+
+    result.maximumDrawdownPercentage =
+        maximumDrawdownPercentage;
 
     return result;
 }
