@@ -137,12 +137,32 @@ int main() {
                       << "\n\n";
         }
             std::cout << "Maximum Drawdown : "
-          << result.maximumDrawdown
-          << '\n';
+                      << result.maximumDrawdown
+                      << '\n';
 
             std::cout << "Maximum Drawdown % : "
-          << result.maximumDrawdownPercentage
-          << "%\n";
+                      << result.maximumDrawdownPercentage
+                      << "%\n";
+
+            std::cout << "Winning Trades   : "
+                      << result.winningTrades
+                      << '\n';
+
+            std::cout << "Losing Trades    : "
+                      << result.losingTrades
+                      << '\n';
+
+            std::cout << "Win Rate         : "
+                      << result.winRate
+                      << "%\n";
+
+            std::cout << "Average Win      : "
+                      << result.averageWin
+                      << '\n';
+
+            std::cout << "Average Loss     : "
+                      << result.averageLoss
+                      << "\n";
     }
     catch (const std::exception& e) {
 

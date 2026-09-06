@@ -349,5 +349,52 @@ BacktestResult runBacktest(
     result.maximumDrawdownPercentage =
         maximumDrawdownPercentage;
 
+        // =========================================================
+// TRADE STATISTICS
+// =========================================================
+
+double totalWinningProfit = 0.0;
+double totalLosingProfit = 0.0;
+
+for (const auto& trade : result.trades) {
+
+    if (trade.profitLoss > 0.0) {
+
+        ++result.winningTrades;
+
+        totalWinningProfit += trade.profitLoss;
+    }
+    else if (trade.profitLoss < 0.0) {
+
+        ++result.losingTrades;
+
+        totalLosingProfit += trade.profitLoss;
+    }
+}
+
+// Win rate.
+if (!result.trades.empty()) {
+
+    result.winRate =
+        (static_cast<double>(result.winningTrades) /
+         static_cast<double>(result.trades.size())) * 100.0;
+}
+
+// Average winning trade.
+if (result.winningTrades > 0) {
+
+    result.averageWin =
+        totalWinningProfit /
+        static_cast<double>(result.winningTrades);
+}
+
+// Average losing trade.
+if (result.losingTrades > 0) {
+
+    result.averageLoss =
+        totalLosingProfit /
+        static_cast<double>(result.losingTrades);
+}
+
     return result;
 }
