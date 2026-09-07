@@ -163,6 +163,10 @@ int main() {
             std::cout << "Average Loss     : "
                       << result.averageLoss
                       << "\n";
+
+            std::cout << "Profit Factor    : "
+                      << result.profitFactor
+                      << '\n';          
     }
     catch (const std::exception& e) {
 

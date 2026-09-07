@@ -396,5 +396,30 @@ if (result.losingTrades > 0) {
         static_cast<double>(result.losingTrades);
 }
 
+// =========================================================
+// PROFIT FACTOR
+// =========================================================
+
+// Profit Factor = Gross Profit / Absolute Gross Loss
+
+if (totalLosingProfit < 0.0) {
+
+    result.profitFactor =
+        totalWinningProfit /
+        (-totalLosingProfit);
+}
+else if (totalWinningProfit > 0.0) {
+
+    // No losing trades.
+    result.profitFactor =
+        999999.0;
+}
+else {
+
+    // No winning or losing trades.
+    result.profitFactor =
+        0.0;
+}
+
     return result;
 }
