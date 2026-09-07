@@ -2,6 +2,7 @@
 #include "../include/Strategy.hpp"
 
 #include <vector>
+#include <cmath>
 
 BacktestResult runBacktest(
     const std::vector<Candle>& candles,
@@ -419,6 +420,91 @@ else {
     // No winning or losing trades.
     result.profitFactor =
         0.0;
+}
+
+// =========================================================
+// SHARPE RATIO
+// =========================================================
+
+if (result.equityCurve.size() >= 2) {
+
+    std::vector<double> returns;
+
+    returns.reserve(
+        result.equityCurve.size() - 1
+    );
+
+    // Calculate periodic returns.
+    for (std::size_t i = 1;
+         i < result.equityCurve.size();
+         ++i) {
+
+        const double previousEquity =
+            result.equityCurve[i - 1].equity;
+
+        const double currentEquity =
+            result.equityCurve[i].equity;
+
+        if (previousEquity > 0.0) {
+
+            const double periodReturn =
+                (currentEquity / previousEquity) - 1.0;
+
+            returns.push_back(periodReturn);
+        }
+    }
+
+    if (returns.size() >= 2) {
+
+        // Calculate mean return.
+        double sumReturns = 0.0;
+
+        for (const double value : returns) {
+            sumReturns += value;
+        }
+
+        const double meanReturn =
+            sumReturns /
+            static_cast<double>(returns.size());
+
+        // Calculate standard deviation.
+        double squaredDifferenceSum = 0.0;
+
+        for (const double value : returns) {
+
+            const double difference =
+                value - meanReturn;
+
+            squaredDifferenceSum +=
+                difference * difference;
+        }
+
+        const double variance =
+            squaredDifferenceSum /
+            static_cast<double>(returns.size() - 1);
+
+        const double standardDeviation =
+            std::sqrt(variance);
+
+        // Sharpe = mean return / return volatility.
+        if (standardDeviation > 0.0) {
+
+            result.sharpeRatio =
+                meanReturn / standardDeviation;
+        }
+        else {
+
+            result.sharpeRatio = 0.0;
+        }
+    }
+    else {
+
+        result.sharpeRatio = 0.0;
+    }
+}
+else {
+
+    result.sharpeRatio = 0.0;
 }
 
     return result;

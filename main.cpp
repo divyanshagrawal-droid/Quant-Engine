@@ -166,6 +166,10 @@ int main() {
 
             std::cout << "Profit Factor    : "
                       << result.profitFactor
+                      << '\n'; 
+                 
+            std::cout << "Sharpe Ratio     : "
+                      << result.sharpeRatio
                       << '\n';          
     }
     catch (const std::exception& e) {

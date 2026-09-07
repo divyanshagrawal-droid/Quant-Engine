@@ -43,6 +43,7 @@ struct BacktestResult {
     double averageWin{};
     double averageLoss{};
     double profitFactor{};
+    double sharpeRatio{};
 
     std::vector<Trade> trades;
     std::vector<EquityPoint> equityCurve;
