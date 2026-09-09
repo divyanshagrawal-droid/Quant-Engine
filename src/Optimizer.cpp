@@ -2,7 +2,6 @@
 #include "../include/Backtester.hpp"
 
 #include <algorithm>
-#include <iostream>
 #include <vector>
 
 std::vector<OptimizationResult> optimizeSMA(
@@ -11,34 +10,26 @@ std::vector<OptimizationResult> optimizeSMA(
     const std::vector<std::size_t>& slowPeriods,
     double initialCapital,
     double tradingFeeRate,
-    double slippageRate
-)
+    double slippageRate)
 {
     std::vector<OptimizationResult> results;
 
-    // =========================================================
-    // TEST EVERY FAST / SLOW SMA COMBINATION
-    // =========================================================
+    // Avoid selecting strategies with almost no observations.
+    constexpr std::size_t minimumTrades = 10;
 
     for (const std::size_t fastPeriod : fastPeriods)
     {
         for (const std::size_t slowPeriod : slowPeriods)
         {
-            // Fast SMA must be smaller than slow SMA.
             if (fastPeriod >= slowPeriod)
             {
                 continue;
             }
 
-            // Make sure we have enough candles.
             if (slowPeriod > candles.size())
             {
                 continue;
             }
-
-            // =================================================
-            // RUN BACKTEST
-            // =================================================
 
             const BacktestResult backtest =
                 runBacktest(
@@ -50,67 +41,54 @@ std::vector<OptimizationResult> optimizeSMA(
                     slippageRate
                 );
 
-            // =================================================
-            // STORE RESULT
-            // =================================================
+            if (backtest.trades.size() < minimumTrades)
+            {
+                continue;
+            }
 
-            OptimizationResult optimizationResult;
+            OptimizationResult result;
 
-            optimizationResult.fastPeriod =
-                fastPeriod;
-
-            optimizationResult.slowPeriod =
-                slowPeriod;
-
-            optimizationResult.totalProfitLoss =
-                backtest.totalProfitLoss;
-
-            optimizationResult.finalCapital =
-                backtest.finalCapital;
-
-            optimizationResult.maximumDrawdown =
-                backtest.maximumDrawdown;
-
-            optimizationResult.maximumDrawdownPercentage =
+            result.fastPeriod = fastPeriod;
+            result.slowPeriod = slowPeriod;
+            result.totalProfitLoss = backtest.totalProfitLoss;
+            result.finalCapital = backtest.finalCapital;
+            result.maximumDrawdown = backtest.maximumDrawdown;
+            result.maximumDrawdownPercentage =
                 backtest.maximumDrawdownPercentage;
+            result.winRate = backtest.winRate;
+            result.profitFactor = backtest.profitFactor;
+            result.sharpeRatio = backtest.sharpeRatio;
+            result.totalTrades = backtest.trades.size();
 
-            optimizationResult.winRate =
-                backtest.winRate;
-
-            optimizationResult.profitFactor =
-                backtest.profitFactor;
-
-            optimizationResult.sharpeRatio =
-                backtest.sharpeRatio;
-
-            optimizationResult.totalTrades =
-                backtest.trades.size();
-
-            results.push_back(
-                optimizationResult
-            );
+            results.push_back(result);
         }
     }
 
-    // =========================================================
-    // SORT RESULTS
-    // =========================================================
-
-    // Primary ranking:
-    // Highest Profit Factor first.
+    // Ranking:
+    // 1. Positive P&L beats negative P&L.
+    // 2. Higher Profit Factor.
+    // 3. Higher Sharpe.
+    // 4. Lower drawdown.
+    // 5. More trades as a final tie-breaker.
     //
-    // If Profit Factor is equal:
-    // Higher Sharpe Ratio wins.
-    //
-    // If Sharpe is also equal:
-    // Lower Drawdown wins.
-
+    // This is more robust than ranking by Profit Factor alone.
     std::sort(
         results.begin(),
         results.end(),
         [](const OptimizationResult& a,
            const OptimizationResult& b)
         {
+            const bool aProfitable =
+                a.totalProfitLoss > 0.0;
+
+            const bool bProfitable =
+                b.totalProfitLoss > 0.0;
+
+            if (aProfitable != bProfitable)
+            {
+                return aProfitable > bProfitable;
+            }
+
             if (a.profitFactor != b.profitFactor)
             {
                 return a.profitFactor >
@@ -123,8 +101,15 @@ std::vector<OptimizationResult> optimizeSMA(
                        b.sharpeRatio;
             }
 
-            return a.maximumDrawdownPercentage <
-                   b.maximumDrawdownPercentage;
+            if (a.maximumDrawdownPercentage !=
+                b.maximumDrawdownPercentage)
+            {
+                return a.maximumDrawdownPercentage <
+                       b.maximumDrawdownPercentage;
+            }
+
+            return a.totalTrades >
+                   b.totalTrades;
         }
     );
 

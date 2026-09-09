@@ -49,6 +49,7 @@ struct BacktestResult {
     std::vector<EquityPoint> equityCurve;
 };
 
+// Full-dataset backtest.
 BacktestResult runBacktest(
     const std::vector<Candle>& candles,
     std::size_t fastPeriod,
@@ -56,4 +57,19 @@ BacktestResult runBacktest(
     double initialCapital,
     double tradingFeeRate,
     double slippageRate
+);
+
+// Range-aware backtest.
+// startIndex/endIndex are inclusive.
+// Signals use candles before/inside the range, while execution
+// happens on the next candle OPEN.
+BacktestResult runBacktest(
+    const std::vector<Candle>& candles,
+    std::size_t fastPeriod,
+    std::size_t slowPeriod,
+    double initialCapital,
+    double tradingFeeRate,
+    double slippageRate,
+    std::size_t startIndex,
+    std::size_t endIndex
 );

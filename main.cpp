@@ -2,54 +2,84 @@
 #include "include/Optimizer.hpp"
 #include "include/CSVReader.hpp"
 
+#include <algorithm>
 #include <iomanip>
 #include <iostream>
 #include <string>
 #include <vector>
 
+namespace
+{
+void printResult(
+    const std::string& title,
+    const BacktestResult& result)
+{
+    std::cout
+        << "\n========================================\n"
+        << title << '\n'
+        << "========================================\n\n";
+
+    std::cout
+        << std::fixed
+        << std::setprecision(2);
+
+    std::cout << "Initial Capital : "
+              << result.initialCapital << '\n';
+
+    std::cout << "Final Capital   : "
+              << result.finalCapital << '\n';
+
+    std::cout << "Total P&L       : "
+              << result.totalProfitLoss << '\n';
+
+    std::cout << "Trades          : "
+              << result.trades.size() << '\n';
+
+    std::cout << "Win Rate        : "
+              << result.winRate << "%\n";
+
+    std::cout << "Profit Factor   : "
+              << result.profitFactor << '\n';
+
+    std::cout << "Max Drawdown    : "
+              << result.maximumDrawdownPercentage
+              << "%\n";
+
+    std::cout << "Sharpe Ratio    : "
+              << result.sharpeRatio << '\n';
+}
+}
+
 int main()
 {
     try
     {
-        // ============================================================
-        // LOAD HISTORICAL MARKET DATA
-        // ============================================================
-
         const auto candles =
             readCSV("data/BTCUSDT.csv");
 
-        std::cout
-            << "Candles loaded: "
-            << candles.size()
-            << "\n\n";
+        if (candles.empty())
+        {
+            std::cerr << "No candles loaded.\n";
+            return 1;
+        }
 
-
-        // ============================================================
-        // STRATEGY PARAMETERS
-        // ============================================================
+        constexpr double initialCapital = 100000.0;
+        constexpr double tradingFeeRate = 0.001;
+        constexpr double slippageRate = 0.0005;
 
         constexpr std::size_t fastPeriod = 2;
         constexpr std::size_t slowPeriod = 3;
 
+        std::cout
+            << "Candles loaded: "
+            << candles.size()
+            << "\n";
 
-        // ============================================================
-        // BACKTEST PARAMETERS
-        // ============================================================
-
-        constexpr double initialCapital = 100000.0;
-
-        // 0.10% trading fee
-        constexpr double tradingFeeRate = 0.001;
-
-        // 0.05% slippage
-        constexpr double slippageRate = 0.0005;
-
-
-        // ============================================================
-        // RUN NORMAL BACKTEST
-        // ============================================================
-
-        const BacktestResult result =
+        // =========================================================
+        // BASELINE BACKTEST
+        // Execution is now next-candle OPEN.
+        // =========================================================
+        const BacktestResult baseline =
             runBacktest(
                 candles,
                 fastPeriod,
@@ -59,203 +89,91 @@ int main()
                 slippageRate
             );
 
+        printResult(
+            "BASELINE SMA 2/3",
+            baseline
+        );
 
-        // ============================================================
-        // BACKTEST SUMMARY
-        // ============================================================
-
-        std::cout
-            << "========================================\n"
-            << "           BACKTEST RESULTS\n"
-            << "========================================\n\n";
-
-        std::cout
-            << std::fixed
-            << std::setprecision(2);
-
-        std::cout
-            << "Initial Capital : "
-            << result.initialCapital
-            << '\n';
-
-        std::cout
-            << "Final Capital   : "
-            << result.finalCapital
-            << '\n';
-
-        std::cout
-            << "Total P&L       : "
-            << result.totalProfitLoss
-            << '\n';
-
-        std::cout
-            << "Trades          : "
-            << result.trades.size()
-            << "\n\n";
-
-
-        // ============================================================
-        // TRADE DETAILS
-        // ============================================================
-
-        for (std::size_t i = 0;
-             i < result.trades.size();
-             ++i)
+        // =========================================================
+        // 70 / 30 TRAIN-TEST SPLIT
+        // =========================================================
+        if (candles.size() < 100)
         {
-            const Trade& trade = result.trades[i];
-
-            std::cout
-                << "Trade "
-                << (i + 1)
-                << ":\n";
-
-            std::cout
-                << " Entry "
-                << trade.entryTime
-                << " @ "
-                << trade.entryPrice
-                << '\n';
-
-            std::cout
-                << " Exit  "
-                << trade.exitTime
-                << " @ "
-                << trade.exitPrice
-                << '\n';
-
-            std::cout
-                << " Quantity   : "
-                << trade.quantity
-                << '\n';
-
-            std::cout
-                << " Entry Fee  : "
-                << trade.entryFee
-                << '\n';
-
-            std::cout
-                << " Exit Fee   : "
-                << trade.exitFee
-                << '\n';
-
-            std::cout
-                << " Gross P&L  : "
-                << trade.grossProfitLoss
-                << '\n';
-
-            std::cout
-                << " Total Fees : "
-                << trade.totalFees
-                << '\n';
-
-            std::cout
-                << " Net P&L    : "
-                << trade.profitLoss
-                << "\n\n";
+            std::cerr
+                << "\nNot enough candles for a meaningful "
+                   "train/test split.\n";
+            return 1;
         }
 
+        const std::size_t splitIndex =
+            static_cast<std::size_t>(
+                candles.size() * 0.70
+            );
 
-        // ============================================================
-        // PERFORMANCE METRICS
-        // ============================================================
-
-        std::cout
-            << "========================================\n"
-            << "          PERFORMANCE METRICS\n"
-            << "========================================\n\n";
-
-        std::cout
-            << "Maximum Drawdown     : "
-            << result.maximumDrawdown
-            << '\n';
-
-        std::cout
-            << "Maximum Drawdown %   : "
-            << result.maximumDrawdownPercentage
-            << "%\n";
-
-        std::cout
-            << "Winning Trades       : "
-            << result.winningTrades
-            << '\n';
-
-        std::cout
-            << "Losing Trades        : "
-            << result.losingTrades
-            << '\n';
-
-        std::cout
-            << "Win Rate             : "
-            << result.winRate
-            << "%\n";
-
-        std::cout
-            << "Average Win          : "
-            << result.averageWin
-            << '\n';
-
-        std::cout
-            << "Average Loss         : "
-            << result.averageLoss
-            << '\n';
-
-        std::cout
-            << "Profit Factor        : "
-            << result.profitFactor
-            << '\n';
-
-        std::cout
-            << "Sharpe Ratio         : "
-            << result.sharpeRatio
-            << "\n\n";
-
-
-        // ============================================================
-        // EQUITY CURVE
-        // ============================================================
-
-        std::cout
-            << "========================================\n"
-            << "             EQUITY CURVE\n"
-            << "========================================\n\n";
-
-        for (const auto& point : result.equityCurve)
+        if (splitIndex == 0 ||
+            splitIndex >= candles.size() - 1)
         {
-            std::cout
-                << point.timestamp
-                << " | Equity: "
-                << point.equity
-                << '\n';
+            std::cerr
+                << "\nInvalid train/test split.\n";
+            return 1;
         }
 
+        const std::size_t trainEnd =
+            splitIndex - 1;
 
-        // ============================================================
-        // SMA STRATEGY OPTIMIZATION
-        // ============================================================
+        const std::size_t testStart =
+            splitIndex;
 
+        const std::size_t testEnd =
+            candles.size() - 1;
+
+        std::cout
+            << "\n========================================\n"
+            << "          TRAIN / TEST SPLIT\n"
+            << "========================================\n\n";
+
+        std::cout
+            << "Train candles : 0 - "
+            << trainEnd
+            << " ("
+            << (trainEnd + 1)
+            << " candles)\n";
+
+        std::cout
+            << "Test candles  : "
+            << testStart
+            << " - "
+            << testEnd
+            << " ("
+            << (testEnd - testStart + 1)
+            << " candles)\n";
+
+        std::cout
+            << "Split ratio    : 70% / 30%\n";
+
+        // =========================================================
+        // TRAIN-ONLY OPTIMIZATION
+        // =========================================================
         const std::vector<std::size_t> fastPeriods =
         {
-            2,
-            3,
-            5,
-            10,
-            20
+            2, 3, 5, 10, 20
         };
 
         const std::vector<std::size_t> slowPeriods =
         {
-            3,
-            5,
-            10,
-            20,
-            30,
-            50
+            3, 5, 10, 20, 30, 50
         };
 
+        // The existing optimizer runs on a supplied vector, so
+        // create a training-only dataset for parameter selection.
+        const std::vector<Candle> trainCandles(
+            candles.begin(),
+            candles.begin() + splitIndex
+        );
 
-        const std::vector<OptimizationResult> optimizationResults =
+        const auto optimizationResults =
             optimizeSMA(
-                candles,
+                trainCandles,
                 fastPeriods,
                 slowPeriods,
                 initialCapital,
@@ -263,14 +181,9 @@ int main()
                 slippageRate
             );
 
-
-        // ============================================================
-        // OPTIMIZATION RESULTS
-        // ============================================================
-
         std::cout
             << "\n========================================\n"
-            << "       SMA STRATEGY OPTIMIZATION\n"
+            << "       TRAINING OPTIMIZATION\n"
             << "========================================\n\n";
 
         std::cout
@@ -289,101 +202,121 @@ int main()
             << std::string(88, '-')
             << '\n';
 
-        std::cout
-            << std::fixed
-            << std::setprecision(2);
-
-        for (const auto& optimizationResult :
-             optimizationResults)
+        for (const auto& r : optimizationResults)
         {
             std::cout
                 << std::left
-                << std::setw(8)
-                << optimizationResult.fastPeriod
-
-                << std::setw(8)
-                << optimizationResult.slowPeriod
-
-                << std::setw(14)
-                << optimizationResult.totalProfitLoss
-
-                << std::setw(12)
-                << optimizationResult.profitFactor
-
-                << std::setw(12)
-                << optimizationResult.maximumDrawdownPercentage
-
-                << std::setw(12)
-                << optimizationResult.winRate
-
-                << std::setw(12)
-                << optimizationResult.sharpeRatio
-
-                << std::setw(10)
-                << optimizationResult.totalTrades
-
+                << std::setw(8) << r.fastPeriod
+                << std::setw(8) << r.slowPeriod
+                << std::setw(14) << r.totalProfitLoss
+                << std::setw(12) << r.profitFactor
+                << std::setw(12) << r.maximumDrawdownPercentage
+                << std::setw(12) << r.winRate
+                << std::setw(12) << r.sharpeRatio
+                << std::setw(10) << r.totalTrades
                 << '\n';
         }
 
-
-        // ============================================================
-        // BEST STRATEGY
-        // ============================================================
-
-        if (!optimizationResults.empty())
+        if (optimizationResults.empty())
         {
-            const OptimizationResult& best =
-                optimizationResults.front();
+            std::cerr
+                << "\nNo valid optimization result found.\n";
+            return 1;
+        }
 
-            std::cout
-                << "\n========================================\n"
-                << "             BEST STRATEGY\n"
-                << "========================================\n\n";
+        const auto& best =
+            optimizationResults.front();
 
-            std::cout
-                << "Fast SMA       : "
-                << best.fastPeriod
-                << '\n';
+        std::cout
+            << "\n========================================\n"
+            << "       SELECTED TRAINING MODEL\n"
+            << "========================================\n\n";
 
-            std::cout
-                << "Slow SMA       : "
-                << best.slowPeriod
-                << '\n';
+        std::cout
+            << "Fast SMA       : "
+            << best.fastPeriod << '\n';
 
-            std::cout
-                << "Final Capital  : "
-                << best.finalCapital
-                << '\n';
+        std::cout
+            << "Slow SMA       : "
+            << best.slowPeriod << '\n';
 
-            std::cout
-                << "Total P&L      : "
-                << best.totalProfitLoss
-                << '\n';
+        std::cout
+            << "Train P&L      : "
+            << best.totalProfitLoss << '\n';
 
-            std::cout
-                << "Profit Factor  : "
-                << best.profitFactor
-                << '\n';
+        std::cout
+            << "Train PF       : "
+            << best.profitFactor << '\n';
 
-            std::cout
-                << "Win Rate       : "
-                << best.winRate
-                << "%\n";
+        // =========================================================
+        // OUT-OF-SAMPLE TEST
+        //
+        // Important: the backtester uses the ORIGINAL candle array
+        // for SMA history. Therefore the first test signal can use
+        // the completed train candle immediately before the split.
+        // No test candle is used to choose parameters.
+        // =========================================================
+        const BacktestResult testResult =
+            runBacktest(
+                candles,
+                best.fastPeriod,
+                best.slowPeriod,
+                initialCapital,
+                tradingFeeRate,
+                slippageRate,
+                testStart,
+                testEnd
+            );
 
-            std::cout
-                << "Max Drawdown   : "
-                << best.maximumDrawdownPercentage
-                << "%\n";
+        printResult(
+            "OUT-OF-SAMPLE TEST",
+            testResult
+        );
 
-            std::cout
-                << "Sharpe Ratio   : "
-                << best.sharpeRatio
-                << '\n';
+        std::cout
+            << "\n========================================\n"
+            << "             FINAL VERDICT\n"
+            << "========================================\n\n";
 
+        std::cout
+            << "Selected SMA   : "
+            << best.fastPeriod
+            << "/"
+            << best.slowPeriod
+            << '\n';
+
+        std::cout
+            << "Train P&L      : "
+            << best.totalProfitLoss
+            << '\n';
+
+        std::cout
+            << "Test P&L       : "
+            << testResult.totalProfitLoss
+            << '\n';
+
+        std::cout
+            << "Test PF        : "
+            << testResult.profitFactor
+            << '\n';
+
+        std::cout
+            << "Test Win Rate  : "
+            << testResult.winRate
+            << "%\n";
+
+        if (testResult.totalProfitLoss > 0.0 &&
+            testResult.profitFactor > 1.0)
+        {
             std::cout
-                << "Total Trades   : "
-                << best.totalTrades
-                << '\n';
+                << "\nSTATUS: PROFITABLE OUT-OF-SAMPLE\n";
+        }
+        else
+        {
+            std::cout
+                << "\nSTATUS: NOT PROFITABLE OUT-OF-SAMPLE\n";
+            std::cout
+                << "Do not treat this model as production-ready.\n";
         }
 
         std::cout
