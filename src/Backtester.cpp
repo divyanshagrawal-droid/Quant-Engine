@@ -1,5 +1,6 @@
 #include "../include/Backtester.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -42,6 +43,8 @@ BacktestResult runBacktestInternal(
     std::size_t slowPeriod,
     std::size_t rsiPeriod,
     double rsiBuyThreshold,
+    double stopLossPercentage,
+    double takeProfitPercentage,
     double initialCapital,
     double tradingFeeRate,
     double slippageRate,
@@ -62,13 +65,26 @@ BacktestResult runBacktestInternal(
         return result;
     }
 
+    if (stopLossPercentage < 0.0 ||
+        takeProfitPercentage < 0.0) {
+        throw std::invalid_argument(
+            "Stop loss and take profit percentages cannot be negative."
+        );
+    }
+
     bool inPosition = false;
+
     double quantity = 0.0;
     double entryPrice = 0.0;
     double entryFee = 0.0;
+
+    double stopLossPrice = 0.0;
+    double takeProfitPrice = 0.0;
+
     std::string entryTime;
 
     for (std::size_t i = startIndex; i <= endIndex; ++i) {
+
         Signal signal = Signal::HOLD;
 
         // Signal is generated from the completed previous candle.
@@ -85,7 +101,12 @@ BacktestResult runBacktestInternal(
             );
         }
 
+        // ============================================================
+        // ENTRY
+        // ============================================================
+
         if (signal == Signal::BUY && !inPosition) {
+
             entryPrice =
                 candles[i].open * (1.0 + slippageRate);
 
@@ -101,53 +122,136 @@ BacktestResult runBacktestInternal(
             entryFee =
                 entryValue * tradingFeeRate;
 
+            // Risk management levels
+            stopLossPrice =
+                entryPrice * (1.0 - stopLossPercentage);
+
+            takeProfitPrice =
+                entryPrice * (1.0 + takeProfitPercentage);
+
             inPosition = true;
         }
-        else if (signal == Signal::SELL && inPosition) {
-            const double exitPrice =
-                candles[i].open * (1.0 - slippageRate);
 
-            const double exitValue =
-                exitPrice * quantity;
+        // ============================================================
+        // POSITION MANAGEMENT
+        // ============================================================
 
-            const double exitFee =
-                exitValue * tradingFeeRate;
+        else if (inPosition) {
 
-            const double grossProfitLoss =
-                (exitPrice - entryPrice) * quantity;
+            bool stopLossHit = false;
+            bool takeProfitHit = false;
 
-            const double totalFees =
-                entryFee + exitFee;
+            // Check intrabar risk levels.
+            if (candles[i].low <= stopLossPrice) {
+                stopLossHit = true;
+            }
 
-            const double profitLoss =
-                grossProfitLoss - totalFees;
+            if (candles[i].high >= takeProfitPrice) {
+                takeProfitHit = true;
+            }
 
-            Trade trade;
-            trade.entryTime = entryTime;
-            trade.exitTime = candles[i].timestamp;
-            trade.entryPrice = entryPrice;
-            trade.exitPrice = exitPrice;
-            trade.quantity = quantity;
-            trade.entryFee = entryFee;
-            trade.exitFee = exitFee;
-            trade.grossProfitLoss = grossProfitLoss;
-            trade.totalFees = totalFees;
-            trade.profitLoss = profitLoss;
+            bool exitPosition = false;
+            double exitPrice = 0.0;
 
-            result.trades.push_back(trade);
-            result.finalCapital += profitLoss;
+            // --------------------------------------------------------
+            // If both SL and TP are hit in the same candle,
+            // use conservative assumption: STOP LOSS happens first.
+            // --------------------------------------------------------
 
-            inPosition = false;
-            quantity = 0.0;
-            entryPrice = 0.0;
-            entryFee = 0.0;
-            entryTime.clear();
+            if (stopLossHit) {
+
+                exitPosition = true;
+
+                exitPrice =
+                    stopLossPrice * (1.0 - slippageRate);
+            }
+            else if (takeProfitHit) {
+
+                exitPosition = true;
+
+                exitPrice =
+                    takeProfitPrice * (1.0 - slippageRate);
+            }
+            else if (signal == Signal::SELL) {
+
+                exitPosition = true;
+
+                exitPrice =
+                    candles[i].open * (1.0 - slippageRate);
+            }
+
+            // --------------------------------------------------------
+            // EXIT
+            // --------------------------------------------------------
+
+            if (exitPosition) {
+
+                const double exitValue =
+                    exitPrice * quantity;
+
+                const double exitFee =
+                    exitValue * tradingFeeRate;
+
+                const double grossProfitLoss =
+                    (exitPrice - entryPrice) * quantity;
+
+                const double totalFees =
+                    entryFee + exitFee;
+
+                const double profitLoss =
+                    grossProfitLoss - totalFees;
+
+                Trade trade;
+
+                trade.entryTime = entryTime;
+                trade.exitTime = candles[i].timestamp;
+
+                trade.entryPrice = entryPrice;
+                trade.exitPrice = exitPrice;
+
+                trade.quantity = quantity;
+
+                trade.entryFee = entryFee;
+                trade.exitFee = exitFee;
+
+                trade.grossProfitLoss =
+                    grossProfitLoss;
+
+                trade.totalFees =
+                    totalFees;
+
+                trade.profitLoss =
+                    profitLoss;
+
+                result.trades.push_back(trade);
+
+                result.finalCapital += profitLoss;
+
+                inPosition = false;
+
+                quantity = 0.0;
+                entryPrice = 0.0;
+                entryFee = 0.0;
+
+                stopLossPrice = 0.0;
+                takeProfitPrice = 0.0;
+
+                entryTime.clear();
+            }
         }
 
-        double currentEquity = result.finalCapital;
+        // ============================================================
+        // EQUITY CURVE
+        // ============================================================
+
+        double currentEquity =
+            result.finalCapital;
 
         if (inPosition) {
-            const double markPrice = candles[i].close;
+
+            const double markPrice =
+                candles[i].close;
+
             const double positionValue =
                 markPrice * quantity;
 
@@ -163,9 +267,14 @@ BacktestResult runBacktestInternal(
         );
     }
 
-    // Force-close at the end of the selected range.
+    // ================================================================
+    // FORCE CLOSE AT END OF SELECTED RANGE
+    // ================================================================
+
     if (inPosition) {
-        const Candle& finalCandle = candles[endIndex];
+
+        const Candle& finalCandle =
+            candles[endIndex];
 
         const double exitPrice =
             finalCandle.close * (1.0 - slippageRate);
@@ -186,18 +295,29 @@ BacktestResult runBacktestInternal(
             grossProfitLoss - totalFees;
 
         Trade trade;
+
         trade.entryTime = entryTime;
         trade.exitTime = finalCandle.timestamp;
+
         trade.entryPrice = entryPrice;
         trade.exitPrice = exitPrice;
+
         trade.quantity = quantity;
+
         trade.entryFee = entryFee;
         trade.exitFee = exitFee;
-        trade.grossProfitLoss = grossProfitLoss;
-        trade.totalFees = totalFees;
-        trade.profitLoss = profitLoss;
+
+        trade.grossProfitLoss =
+            grossProfitLoss;
+
+        trade.totalFees =
+            totalFees;
+
+        trade.profitLoss =
+            profitLoss;
 
         result.trades.push_back(trade);
+
         result.finalCapital += profitLoss;
 
         inPosition = false;
@@ -208,14 +328,22 @@ BacktestResult runBacktestInternal(
         }
     }
 
-    result.totalProfitLoss =
-        result.finalCapital - result.initialCapital;
+    // ================================================================
+    // PERFORMANCE METRICS
+    // ================================================================
 
-    double peakEquity = result.initialCapital;
+    result.totalProfitLoss =
+        result.finalCapital -
+        result.initialCapital;
+
+    double peakEquity =
+        result.initialCapital;
+
     double maximumDrawdown = 0.0;
     double maximumDrawdownPercentage = 0.0;
 
     for (const auto& point : result.equityCurve) {
+
         if (point.equity > peakEquity) {
             peakEquity = point.equity;
         }
@@ -224,9 +352,13 @@ BacktestResult runBacktestInternal(
             peakEquity - point.equity;
 
         maximumDrawdown =
-            std::max(maximumDrawdown, drawdown);
+            std::max(
+                maximumDrawdown,
+                drawdown
+            );
 
         if (peakEquity > 0.0) {
+
             const double drawdownPercentage =
                 (drawdown / peakEquity) * 100.0;
 
@@ -238,59 +370,96 @@ BacktestResult runBacktestInternal(
         }
     }
 
-    result.maximumDrawdown = maximumDrawdown;
+    result.maximumDrawdown =
+        maximumDrawdown;
+
     result.maximumDrawdownPercentage =
         maximumDrawdownPercentage;
+
+    // ================================================================
+    // TRADE STATISTICS
+    // ================================================================
 
     double totalWinningProfit = 0.0;
     double totalLosingProfit = 0.0;
 
     for (const auto& trade : result.trades) {
+
         if (trade.profitLoss > 0.0) {
+
             ++result.winningTrades;
-            totalWinningProfit += trade.profitLoss;
+
+            totalWinningProfit +=
+                trade.profitLoss;
         }
         else if (trade.profitLoss < 0.0) {
+
             ++result.losingTrades;
-            totalLosingProfit += trade.profitLoss;
+
+            totalLosingProfit +=
+                trade.profitLoss;
         }
     }
 
     if (!result.trades.empty()) {
+
         result.winRate =
-            (static_cast<double>(result.winningTrades) /
-             static_cast<double>(result.trades.size())) * 100.0;
+            (
+                static_cast<double>(
+                    result.winningTrades
+                )
+                /
+                static_cast<double>(
+                    result.trades.size()
+                )
+            ) * 100.0;
     }
 
     if (result.winningTrades > 0) {
+
         result.averageWin =
             totalWinningProfit /
-            static_cast<double>(result.winningTrades);
+            static_cast<double>(
+                result.winningTrades
+            );
     }
 
     if (result.losingTrades > 0) {
+
         result.averageLoss =
             totalLosingProfit /
-            static_cast<double>(result.losingTrades);
+            static_cast<double>(
+                result.losingTrades
+            );
     }
 
     if (totalLosingProfit < 0.0) {
+
         result.profitFactor =
-            totalWinningProfit / (-totalLosingProfit);
+            totalWinningProfit /
+            (-totalLosingProfit);
     }
     else if (totalWinningProfit > 0.0) {
+
         result.profitFactor = 999999.0;
     }
     else {
+
         result.profitFactor = 0.0;
     }
 
+    // ================================================================
+    // SHARPE RATIO
+    // ================================================================
+
     if (result.equityCurve.size() >= 2) {
+
         std::vector<double> returns;
 
         for (std::size_t i = 1;
              i < result.equityCurve.size();
              ++i) {
+
             const double previous =
                 result.equityCurve[i - 1].equity;
 
@@ -298,6 +467,7 @@ BacktestResult runBacktestInternal(
                 result.equityCurve[i].equity;
 
             if (previous > 0.0) {
+
                 returns.push_back(
                     (current / previous) - 1.0
                 );
@@ -305,6 +475,7 @@ BacktestResult runBacktestInternal(
         }
 
         if (returns.size() >= 2) {
+
             double sum = 0.0;
 
             for (double value : returns) {
@@ -312,19 +483,27 @@ BacktestResult runBacktestInternal(
             }
 
             const double mean =
-                sum / static_cast<double>(returns.size());
+                sum /
+                static_cast<double>(
+                    returns.size()
+                );
 
             double squaredDifferenceSum = 0.0;
 
             for (double value : returns) {
-                const double difference = value - mean;
+
+                const double difference =
+                    value - mean;
+
                 squaredDifferenceSum +=
                     difference * difference;
             }
 
             const double variance =
                 squaredDifferenceSum /
-                static_cast<double>(returns.size() - 1);
+                static_cast<double>(
+                    returns.size() - 1
+                );
 
             const double standardDeviation =
                 std::sqrt(variance);
@@ -340,6 +519,10 @@ BacktestResult runBacktestInternal(
 }
 
 } // namespace
+
+// ====================================================================
+// ORIGINAL SMA BACKTEST
+// ====================================================================
 
 BacktestResult runBacktest(
     const std::vector<Candle>& candles,
@@ -360,6 +543,8 @@ BacktestResult runBacktest(
         slowPeriod,
         14,
         50.0,
+        0.0,
+        0.0,
         initialCapital,
         tradingFeeRate,
         slippageRate,
@@ -367,6 +552,10 @@ BacktestResult runBacktest(
         candles.size() - 1
     );
 }
+
+// ====================================================================
+// SMA BACKTEST WITH RANGE
+// ====================================================================
 
 BacktestResult runBacktest(
     const std::vector<Candle>& candles,
@@ -385,6 +574,8 @@ BacktestResult runBacktest(
         slowPeriod,
         14,
         50.0,
+        0.0,
+        0.0,
         initialCapital,
         tradingFeeRate,
         slippageRate,
@@ -393,6 +584,10 @@ BacktestResult runBacktest(
     );
 }
 
+// ====================================================================
+// RSI + SMA BACKTEST WITH RISK MANAGEMENT
+// ====================================================================
+
 BacktestResult runBacktest(
     const std::vector<Candle>& candles,
     StrategyType strategyType,
@@ -400,6 +595,8 @@ BacktestResult runBacktest(
     std::size_t slowPeriod,
     std::size_t rsiPeriod,
     double rsiBuyThreshold,
+    double stopLossPercentage,
+    double takeProfitPercentage,
     double initialCapital,
     double tradingFeeRate,
     double slippageRate,
@@ -413,6 +610,8 @@ BacktestResult runBacktest(
         slowPeriod,
         rsiPeriod,
         rsiBuyThreshold,
+        stopLossPercentage,
+        takeProfitPercentage,
         initialCapital,
         tradingFeeRate,
         slippageRate,

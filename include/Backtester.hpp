@@ -67,6 +67,8 @@ BacktestResult runBacktest(
     std::size_t slowPeriod,
     std::size_t rsiPeriod,
     double rsiBuyThreshold,
+    double stopLossPercentage,
+    double takeProfitPercentage,
     double initialCapital,
     double tradingFeeRate,
     double slippageRate,
