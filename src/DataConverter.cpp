@@ -1,6 +1,6 @@
 #include "../include/DataConverter.hpp"
 
-#include <chrono>
+#include <algorithm>
 #include <ctime>
 #include <fstream>
 #include <iomanip>
@@ -11,11 +11,21 @@
 
 namespace
 {
+    struct ConvertedCandle
+    {
+        long long timestampValue{};
+        std::string timestamp;
+        double open{};
+        double high{};
+        double low{};
+        double close{};
+        double volume{};
+    };
+
     std::string convertTimestamp(const std::string& timestamp)
     {
         try
         {
-            // Binance timestamp is in microseconds.
             const long long microseconds =
                 std::stoll(timestamp);
 
@@ -49,14 +59,6 @@ namespace
 
     bool isHeader(const std::string& line)
     {
-        if (line.empty())
-        {
-            return false;
-        }
-
-        // Binance raw data normally has no header.
-        // If the first field cannot be converted to
-        // a number, we assume it is a header.
         const std::size_t commaPosition =
             line.find(',');
 
@@ -78,24 +80,204 @@ namespace
             return true;
         }
     }
+
+    bool parseFile(
+        const std::string& inputFile,
+        std::vector<ConvertedCandle>& candles,
+        std::size_t& skippedRows
+    )
+    {
+        std::ifstream input(inputFile);
+
+        if (!input.is_open())
+        {
+            std::cerr
+                << "Error: Could not open input file: "
+                << inputFile
+                << '\n';
+
+            return false;
+        }
+
+        std::string line;
+        std::size_t lineNumber = 0;
+        bool firstLine = true;
+
+        while (std::getline(input, line))
+        {
+            ++lineNumber;
+
+            if (!line.empty() && line.back() == '\r')
+            {
+                line.pop_back();
+            }
+
+            if (line.empty())
+            {
+                continue;
+            }
+
+            if (firstLine && isHeader(line))
+            {
+                firstLine = false;
+                continue;
+            }
+
+            firstLine = false;
+
+            std::stringstream stream(line);
+
+            std::vector<std::string> columns;
+            std::string field;
+
+            while (std::getline(stream, field, ','))
+            {
+                columns.push_back(field);
+            }
+
+            if (columns.size() < 12)
+            {
+                ++skippedRows;
+                continue;
+            }
+
+            try
+            {
+                const long long timestampValue =
+                    std::stoll(columns[0]);
+
+                const std::string timestamp =
+                    convertTimestamp(columns[0]);
+
+                const double open =
+                    std::stod(columns[1]);
+
+                const double high =
+                    std::stod(columns[2]);
+
+                const double low =
+                    std::stod(columns[3]);
+
+                const double close =
+                    std::stod(columns[4]);
+
+                const double volume =
+                    std::stod(columns[5]);
+
+                if (timestamp.empty())
+                {
+                    ++skippedRows;
+                    continue;
+                }
+
+                if (open <= 0.0 ||
+                    high <= 0.0 ||
+                    low <= 0.0 ||
+                    close <= 0.0 ||
+                    volume < 0.0)
+                {
+                    ++skippedRows;
+                    continue;
+                }
+
+                if (high < low ||
+                    high < open ||
+                    high < close ||
+                    low > open ||
+                    low > close)
+                {
+                    ++skippedRows;
+                    continue;
+                }
+
+                candles.push_back({
+                    timestampValue,
+                    timestamp,
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume
+                });
+            }
+            catch (const std::exception&)
+            {
+                ++skippedRows;
+            }
+        }
+
+        return true;
+    }
 }
 
 bool convertBinanceCSV(
-    const std::string& inputFile,
+    const std::vector<std::string>& inputFiles,
     const std::string& outputFile
 )
 {
-    std::ifstream input(inputFile);
+    std::vector<ConvertedCandle> candles;
 
-    if (!input.is_open())
+    std::size_t skippedRows = 0;
+
+    // =========================================================
+    // READ ALL MONTHLY FILES
+    // =========================================================
+
+    for (const auto& inputFile : inputFiles)
     {
-        std::cerr
-            << "Error: Could not open input file: "
+        std::cout
+            << "\nProcessing: "
             << inputFile
             << '\n';
 
-        return false;
+        if (!parseFile(
+                inputFile,
+                candles,
+                skippedRows))
+        {
+            return false;
+        }
     }
+
+    // =========================================================
+    // SORT ALL CANDLES CHRONOLOGICALLY
+    // =========================================================
+
+    std::sort(
+        candles.begin(),
+        candles.end(),
+        [](const ConvertedCandle& a,
+           const ConvertedCandle& b)
+        {
+            return a.timestampValue <
+                   b.timestampValue;
+        }
+    );
+
+    // =========================================================
+    // REMOVE DUPLICATES
+    // =========================================================
+
+    const auto newEnd =
+        std::unique(
+            candles.begin(),
+            candles.end(),
+            [](const ConvertedCandle& a,
+               const ConvertedCandle& b)
+            {
+                return a.timestampValue ==
+                       b.timestampValue;
+            }
+        );
+
+    candles.erase(
+        newEnd,
+        candles.end()
+    );
+
+    // =========================================================
+    // WRITE FINAL DATASET
+    // =========================================================
 
     std::ofstream output(
         outputFile,
@@ -112,178 +294,23 @@ bool convertBinanceCSV(
         return false;
     }
 
-    // =========================================================
-    // WRITE QUANT ENGINE CSV HEADER
-    // =========================================================
-
     output
         << "timestamp,open,high,low,close,volume\n";
 
-    std::string line;
-
-    std::size_t lineNumber = 0;
-    std::size_t convertedRows = 0;
-    std::size_t skippedRows = 0;
-
-    bool firstLine = true;
-
-    // =========================================================
-    // READ BINANCE CSV
-    // =========================================================
-
-    while (std::getline(input, line))
+    for (const auto& candle : candles)
     {
-        ++lineNumber;
-
-        if (!line.empty() && line.back() == '\r')
-        {
-            line.pop_back();
-        }
-
-        if (line.empty())
-        {
-            continue;
-        }
-
-        // Skip header if the file contains one.
-        if (firstLine && isHeader(line))
-        {
-            firstLine = false;
-            continue;
-        }
-
-        firstLine = false;
-
-        std::stringstream stream(line);
-
-        std::vector<std::string> columns;
-
-        std::string field;
-
-        while (std::getline(stream, field, ','))
-        {
-            columns.push_back(field);
-        }
-
-        // Binance kline data should contain 12 columns.
-        if (columns.size() < 12)
-        {
-            std::cerr
-                << "Warning: Skipping malformed row at line "
-                << lineNumber
-                << ". Expected 12 columns, found "
-                << columns.size()
-                << ".\n";
-
-            ++skippedRows;
-            continue;
-        }
-
-        try
-        {
-            // =================================================
-            // BINANCE COLUMN MAPPING
-            // =================================================
-
-            // 0 = Open time
-            // 1 = Open
-            // 2 = High
-            // 3 = Low
-            // 4 = Close
-            // 5 = Volume
-            // 6 = Close time
-            // 7 = Quote asset volume
-            // 8 = Number of trades
-            // 9 = Taker buy base volume
-            // 10 = Taker buy quote volume
-            // 11 = Ignore
-
-            const std::string timestamp =
-                convertTimestamp(columns[0]);
-
-            const double open =
-                std::stod(columns[1]);
-
-            const double high =
-                std::stod(columns[2]);
-
-            const double low =
-                std::stod(columns[3]);
-
-            const double close =
-                std::stod(columns[4]);
-
-            const double volume =
-                std::stod(columns[5]);
-
-            // =================================================
-            // VALIDATION
-            // =================================================
-
-            if (timestamp.empty())
-            {
-                ++skippedRows;
-                continue;
-            }
-
-            if (open <= 0.0 ||
-                high <= 0.0 ||
-                low <= 0.0 ||
-                close <= 0.0 ||
-                volume < 0.0)
-            {
-                std::cerr
-                    << "Warning: Invalid market data at line "
-                    << lineNumber
-                    << ".\n";
-
-                ++skippedRows;
-                continue;
-            }
-
-            if (high < low ||
-                high < open ||
-                high < close ||
-                low > open ||
-                low > close)
-            {
-                std::cerr
-                    << "Warning: Invalid OHLC data at line "
-                    << lineNumber
-                    << ".\n";
-
-                ++skippedRows;
-                continue;
-            }
-
-            // =================================================
-            // WRITE CONVERTED DATA
-            // =================================================
-
-            output
-                << timestamp << ','
-                << std::fixed << std::setprecision(8)
-                << open << ','
-                << high << ','
-                << low << ','
-                << close << ','
-                << volume
-                << '\n';
-
-            ++convertedRows;
-        }
-        catch (const std::exception&)
-        {
-            std::cerr
-                << "Warning: Invalid numeric data at line "
-                << lineNumber
-                << ".\n";
-
-            ++skippedRows;
-        }
+        output
+            << candle.timestamp << ','
+            << std::fixed
+            << std::setprecision(8)
+            << candle.open << ','
+            << candle.high << ','
+            << candle.low << ','
+            << candle.close << ','
+            << candle.volume
+            << '\n';
     }
 
-    input.close();
     output.close();
 
     // =========================================================
@@ -294,8 +321,8 @@ bool convertBinanceCSV(
         << "\n===== DATA CONVERSION RESULT =====\n";
 
     std::cout
-        << "Input file      : "
-        << inputFile
+        << "Input files     : "
+        << inputFiles.size()
         << '\n';
 
     std::cout
@@ -305,7 +332,7 @@ bool convertBinanceCSV(
 
     std::cout
         << "Converted rows  : "
-        << convertedRows
+        << candles.size()
         << '\n';
 
     std::cout
@@ -313,7 +340,7 @@ bool convertBinanceCSV(
         << skippedRows
         << '\n';
 
-    if (convertedRows == 0)
+    if (candles.empty())
     {
         std::cerr
             << "Error: No valid candles were converted.\n";

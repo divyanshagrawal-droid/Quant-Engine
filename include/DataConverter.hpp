@@ -1,8 +1,9 @@
 #pragma once
 
-#include<string>
+#include <string>
+#include <vector>
 
 bool convertBinanceCSV(
-    const std::string& inputfile,
-    const std::string& outputfile
+    const std::vector<std::string>& inputFiles,
+    const std::string& outputFile
 );
