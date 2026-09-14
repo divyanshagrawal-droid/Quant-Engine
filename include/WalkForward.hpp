@@ -25,7 +25,9 @@ struct WalkForwardResult
     double testProfitFactor{};
     double testSharpeRatio{};
     std::size_t testTrades{};
+    std::vector<EquityPoint> testEquityCurve;
 };
+
 
 std::vector<WalkForwardResult> runWalkForwardValidation(
     const std::vector<Candle>& candles,
