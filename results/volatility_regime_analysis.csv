@@ -1,0 +1,4 @@
+regime,trades,profit_loss,profit_factor,expectancy,win_rate
+Low Volatility,0,0,0,0,0
+Normal Volatility,11,34.5137,1.004,3.13761,27.2727
+High Volatility,7,-7232.69,0.0548129,-1033.24,14.2857

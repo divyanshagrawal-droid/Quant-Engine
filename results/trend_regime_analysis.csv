@@ -1,0 +1,6 @@
+regime,candles,trades,profit_loss,profit_factor,expectancy,win_rate
+Strong Uptrend,110,1,1220.46,999999,1220.46,100
+Weak Uptrend,827,7,-765.442,0.828665,-109.349,14.2857
+Sideways,2102,8,-4065.44,0.505733,-508.18,25
+Weak Downtrend,1087,2,-3587.76,0,-1793.88,0
+Strong Downtrend,194,0,0,0,0,0
