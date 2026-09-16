@@ -75,3 +75,21 @@ BacktestResult runBacktest(
     std::size_t startIndex,
     std::size_t endIndex
 );
+
+BacktestResult runBacktest(
+    const std::vector<Candle>& candles,
+    StrategyType strategyType,
+    std::size_t fastPeriod,
+    std::size_t slowPeriod,
+    std::size_t rsiPeriod,
+    double rsiBuyThreshold,
+    double stopLossPercentage,
+    double takeProfitPercentage,
+    double initialCapital,
+    double tradingFeeRate,
+    double slippageRate,
+    std::size_t startIndex,
+    std::size_t endIndex,
+    std::size_t atrPeriod,
+    double maxAtrPercentage
+);
