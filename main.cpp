@@ -9,13 +9,8 @@
 #include <string>
 #include <vector>
 
-struct CostSensitivityResult
+struct OOSMetrics
 {
-    std::string name;
-
-    double fee{};
-    double slippage{};
-
     double finalCapital{};
     double profitLoss{};
     double returnPercentage{};
@@ -31,6 +26,11 @@ struct CostSensitivityResult
     std::size_t totalTrades{};
     std::size_t winningTrades{};
     std::size_t losingTrades{};
+
+    double averageWin{};
+    double averageLoss{};
+
+    std::vector<EquityPoint> equityCurve;
 };
 
 
@@ -155,26 +155,24 @@ double calculateSharpe(
 
 
 // =========================================================
-// RUN ONE COST SCENARIO
+// BUILD COMPOUNDED FILTERED OOS RESULTS
 // =========================================================
 
-CostSensitivityResult runCostScenario(
-    const std::string& scenarioName,
-    double fee,
-    double slippage,
+OOSMetrics calculateFilteredOOSMetrics(
     const std::vector<Candle>& candles,
-    const std::vector<WalkForwardResult>& baselineResults,
+    const std::vector<WalkForwardResult>& results,
     double initialCapital,
+    double tradingFeeRate,
+    double slippageRate,
     double stopLossPercentage,
     double takeProfitPercentage)
 {
-    CostSensitivityResult output;
+    OOSMetrics output;
 
-    output.name = scenarioName;
-    output.fee = fee;
-    output.slippage = slippage;
-
-    std::vector<EquityPoint> combinedCurve;
+    if (results.empty())
+    {
+        return output;
+    }
 
     double combinedCapital =
         initialCapital;
@@ -186,20 +184,18 @@ CostSensitivityResult runCostScenario(
     std::size_t losingTrades = 0;
 
     // Explicit starting point.
-    combinedCurve.push_back(
+    output.equityCurve.push_back(
         {
-            candles[
-                baselineResults.front().testStart
-            ].timestamp,
+            candles[results.front().testStart].timestamp,
             initialCapital
         }
     );
 
     // =====================================================
-    // REPLAY ALL OOS WINDOWS WITH SAME PARAMETERS
+    // REPLAY EVERY OOS WINDOW
     // =====================================================
 
-    for (const auto& window : baselineResults)
+    for (const auto& window : results)
     {
         const BacktestResult testResult =
             runBacktest(
@@ -215,19 +211,21 @@ CostSensitivityResult runCostScenario(
                 takeProfitPercentage,
 
                 initialCapital,
-                fee,
-                slippage,
+                tradingFeeRate,
+                slippageRate,
 
                 window.testStart,
-                window.testEnd
+                window.testEnd,
+
+                window.atrPeriod,
+                window.maxAtrPercentage
             );
 
-        // -------------------------------------------------
-        // Aggregate trades
-        // -------------------------------------------------
+        // =================================================
+        // TRADE STATISTICS
+        // =================================================
 
-        for (const auto& trade :
-             testResult.trades)
+        for (const auto& trade : testResult.trades)
         {
             if (trade.profitLoss > 0.0)
             {
@@ -245,10 +243,9 @@ CostSensitivityResult runCostScenario(
             }
         }
 
-        // -------------------------------------------------
-        // Stitch this OOS equity curve into the
-        // compounded portfolio
-        // -------------------------------------------------
+        // =================================================
+        // STITCH EQUITY CURVES
+        // =================================================
 
         for (const auto& point :
              testResult.equityCurve)
@@ -260,7 +257,7 @@ CostSensitivityResult runCostScenario(
                 combinedCapital *
                 normalizedEquity;
 
-            combinedCurve.push_back(
+            output.equityCurve.push_back(
                 {
                     point.timestamp,
                     combinedEquity
@@ -268,7 +265,10 @@ CostSensitivityResult runCostScenario(
             );
         }
 
-        // Move portfolio capital to next window.
+        // =================================================
+        // COMPOUND CAPITAL INTO NEXT WINDOW
+        // =================================================
+
         combinedCapital =
             combinedCapital *
             (
@@ -278,7 +278,7 @@ CostSensitivityResult runCostScenario(
     }
 
     // =====================================================
-    // FINAL METRICS
+    // FINAL CAPITAL
     // =====================================================
 
     output.finalCapital =
@@ -294,9 +294,9 @@ CostSensitivityResult runCostScenario(
             - 1.0
         ) * 100.0;
 
-    output.totalTrades =
-        winningTrades +
-        losingTrades;
+    // =====================================================
+    // TRADE METRICS
+    // =====================================================
 
     output.winningTrades =
         winningTrades;
@@ -304,33 +304,29 @@ CostSensitivityResult runCostScenario(
     output.losingTrades =
         losingTrades;
 
+    output.totalTrades =
+        winningTrades +
+        losingTrades;
+
     if (output.totalTrades > 0)
     {
         output.winRate =
             (
-                static_cast<double>(
-                    winningTrades
-                )
-                /
-                static_cast<double>(
-                    output.totalTrades
-                )
+                static_cast<double>(winningTrades) /
+                static_cast<double>(output.totalTrades)
             ) * 100.0;
     }
 
-    double averageWin = 0.0;
-    double averageLoss = 0.0;
-
     if (winningTrades > 0)
     {
-        averageWin =
+        output.averageWin =
             totalWinningProfit /
             static_cast<double>(winningTrades);
     }
 
     if (losingTrades > 0)
     {
-        averageLoss =
+        output.averageLoss =
             totalLosingProfit /
             static_cast<double>(losingTrades);
     }
@@ -349,12 +345,18 @@ CostSensitivityResult runCostScenario(
 
     output.expectancy =
         (
-            winProbability * averageWin
+            winProbability *
+            output.averageWin
         )
         +
         (
-            lossProbability * averageLoss
+            lossProbability *
+            output.averageLoss
         );
+
+    // =====================================================
+    // PROFIT FACTOR
+    // =====================================================
 
     if (totalLosingProfit < 0.0)
     {
@@ -364,24 +366,265 @@ CostSensitivityResult runCostScenario(
     }
     else if (totalWinningProfit > 0.0)
     {
-        output.profitFactor = 999999.0;
+        output.profitFactor =
+            999999.0;
     }
     else
     {
-        output.profitFactor = 0.0;
+        output.profitFactor =
+            0.0;
     }
 
+    // =====================================================
+    // DRAWDOWN
+    // =====================================================
+
     calculateDrawdown(
-        combinedCurve,
+        output.equityCurve,
         initialCapital,
         output.maximumDrawdown,
         output.maximumDrawdownPercentage
     );
 
+    // =====================================================
+    // SHARPE
+    // =====================================================
+
     output.sharpeRatio =
-        calculateSharpe(combinedCurve);
+        calculateSharpe(
+            output.equityCurve
+        );
 
     return output;
+}
+
+
+// =========================================================
+// SAVE EQUITY CURVE
+// =========================================================
+
+void saveEquityCurve(
+    const std::string& filename,
+    const std::vector<EquityPoint>& equityCurve)
+{
+    std::ofstream outputFile(filename);
+
+    if (!outputFile)
+    {
+        std::cerr
+            << "Error: Could not create "
+            << filename
+            << "\n";
+
+        return;
+    }
+
+    outputFile
+        << "timestamp,equity\n";
+
+    outputFile
+        << std::fixed
+        << std::setprecision(8);
+
+    for (const auto& point :
+         equityCurve)
+    {
+        outputFile
+            << point.timestamp
+            << ","
+            << point.equity
+            << "\n";
+    }
+
+    outputFile.close();
+
+    std::cout
+        << "\nEquity curve saved to:\n"
+        << filename
+        << "\n";
+}
+
+
+// =========================================================
+// SAVE WINDOW RESULTS
+// =========================================================
+
+void saveWindowResults(
+    const std::string& filename,
+    const std::vector<WalkForwardResult>& results)
+{
+    std::ofstream outputFile(filename);
+
+    if (!outputFile)
+    {
+        std::cerr
+            << "Error: Could not create "
+            << filename
+            << "\n";
+
+        return;
+    }
+
+    outputFile
+        << "window,train_start,train_end,"
+        << "test_start,test_end,"
+        << "fast_period,slow_period,"
+        << "rsi_period,rsi_threshold,"
+        << "atr_period,max_atr_percentage,"
+        << "test_profit_loss,test_final_capital,"
+        << "test_dd_percentage,test_win_rate,"
+        << "test_profit_factor,test_sharpe,"
+        << "test_trades\n";
+
+    outputFile
+        << std::fixed
+        << std::setprecision(8);
+
+    for (std::size_t i = 0;
+         i < results.size();
+         ++i)
+    {
+        const auto& result =
+            results[i];
+
+        outputFile
+            << (i + 1)
+            << ","
+            << result.trainStart
+            << ","
+            << result.trainEnd
+            << ","
+            << result.testStart
+            << ","
+            << result.testEnd
+            << ","
+            << result.fastPeriod
+            << ","
+            << result.slowPeriod
+            << ","
+            << result.rsiPeriod
+            << ","
+            << result.rsiBuyThreshold
+            << ","
+            << result.atrPeriod
+            << ","
+            << result.maxAtrPercentage
+            << ","
+            << result.testProfitLoss
+            << ","
+            << result.testFinalCapital
+            << ","
+            << result.testMaximumDrawdownPercentage
+            << ","
+            << result.testWinRate
+            << ","
+            << result.testProfitFactor
+            << ","
+            << result.testSharpeRatio
+            << ","
+            << result.testTrades
+            << "\n";
+    }
+
+    outputFile.close();
+
+    std::cout
+        << "Window results saved to:\n"
+        << filename
+        << "\n";
+}
+
+
+// =========================================================
+// PRINT OOS SUMMARY
+// =========================================================
+
+void printOOSSummary(
+    const OOSMetrics& metrics)
+{
+    std::cout
+        << "\n========================================\n"
+        << "       FILTERED OOS SUMMARY\n"
+        << "========================================\n";
+
+    std::cout
+        << std::fixed
+        << std::setprecision(2);
+
+    std::cout
+        << "Initial Capital : "
+        << 100000.0
+        << "\n";
+
+    std::cout
+        << "Final Capital   : "
+        << metrics.finalCapital
+        << "\n";
+
+    std::cout
+        << "Total P&L       : "
+        << metrics.profitLoss
+        << "\n";
+
+    std::cout
+        << "Return          : "
+        << metrics.returnPercentage
+        << "%\n";
+
+    std::cout
+        << "Max Drawdown    : "
+        << metrics.maximumDrawdown
+        << "\n";
+
+    std::cout
+        << "Max DD %        : "
+        << metrics.maximumDrawdownPercentage
+        << "%\n";
+
+    std::cout
+        << "Sharpe          : "
+        << metrics.sharpeRatio
+        << "\n";
+
+    std::cout
+        << "Profit Factor   : "
+        << metrics.profitFactor
+        << "\n";
+
+    std::cout
+        << "Win Rate        : "
+        << metrics.winRate
+        << "%\n";
+
+    std::cout
+        << "Expectancy      : "
+        << metrics.expectancy
+        << "\n";
+
+    std::cout
+        << "Average Win     : "
+        << metrics.averageWin
+        << "\n";
+
+    std::cout
+        << "Average Loss    : "
+        << metrics.averageLoss
+        << "\n";
+
+    std::cout
+        << "Total Trades    : "
+        << metrics.totalTrades
+        << "\n";
+
+    std::cout
+        << "Winning Trades  : "
+        << metrics.winningTrades
+        << "\n";
+
+    std::cout
+        << "Losing Trades   : "
+        << metrics.losingTrades
+        << "\n";
 }
 
 
@@ -394,10 +637,14 @@ int main()
     const std::string dataFile =
         "data/BTCUSDT.csv";
 
-    const double initialCapital = 100000.0;
+    const double initialCapital =
+        100000.0;
 
-    const double stopLossPercentage = 0.02;
-    const double takeProfitPercentage = 0.04;
+    const double stopLossPercentage =
+        0.02;
+
+    const double takeProfitPercentage =
+        0.04;
 
     // =========================================================
     // LOAD DATA
@@ -423,39 +670,53 @@ int main()
     // BASELINE COSTS
     // =========================================================
 
-    const double baselineFee = 0.001;
-    const double baselineSlippage = 0.0005;
+    const double baselineFee =
+        0.001;
+
+    const double baselineSlippage =
+        0.0005;
 
     // =========================================================
     // WALK-FORWARD CONFIGURATION
     // =========================================================
 
-    const std::size_t trainSize = 4320;
-    const std::size_t testSize = 720;
+    const std::size_t trainSize =
+        4320;
 
-    const std::vector<std::size_t> fastPeriods = {
-        3, 5, 8
-    };
+    const std::size_t testSize =
+        720;
 
-    const std::vector<std::size_t> slowPeriods = {
-        10, 15, 20, 30
-    };
+    const std::vector<std::size_t>
+        fastPeriods =
+        {
+            3, 5, 8
+        };
 
-    const std::vector<std::size_t> rsiPeriods = {
-        7, 14, 21
-    };
+    const std::vector<std::size_t>
+        slowPeriods =
+        {
+            10, 15, 20, 30
+        };
 
-    const std::vector<double> rsiThresholds = {
-        50.0, 55.0, 60.0
-    };
+    const std::vector<std::size_t>
+        rsiPeriods =
+        {
+            7, 14, 21
+        };
+
+    const std::vector<double>
+        rsiThresholds =
+        {
+            50.0, 55.0, 60.0
+        };
 
     // =========================================================
-    // BASELINE WALK-FORWARD
+    // VOLATILITY-FILTERED WALK-FORWARD
     // =========================================================
 
     std::cout
         << "\n========================================\n"
-        << "       BASELINE WALK-FORWARD\n"
+        << "   VOLATILITY-FILTERED WALK-FORWARD\n"
         << "========================================\n";
 
     std::cout
@@ -468,7 +729,18 @@ int main()
         << baselineSlippage * 100.0
         << "%\n";
 
-    const std::vector<WalkForwardResult> baselineResults =
+    std::cout
+        << "Train Size: "
+        << trainSize
+        << "\n";
+
+    std::cout
+        << "Test Size : "
+        << testSize
+        << "\n";
+
+    const std::vector<WalkForwardResult>
+        filteredResults =
         runWalkForwardValidation(
             candles,
             trainSize,
@@ -484,7 +756,7 @@ int main()
             baselineSlippage
         );
 
-    if (baselineResults.empty())
+    if (filteredResults.empty())
     {
         std::cerr
             << "\nError: No walk-forward results.\n";
@@ -493,7 +765,7 @@ int main()
     }
 
     // =========================================================
-    // SHOW SELECTED MODELS
+    // SELECTED OOS PARAMETERS
     // =========================================================
 
     std::cout
@@ -501,105 +773,119 @@ int main()
         << "       SELECTED OOS PARAMETERS\n"
         << "========================================\n";
 
+    std::cout
+        << std::fixed
+        << std::setprecision(6);
+
     for (std::size_t i = 0;
-         i < baselineResults.size();
+         i < filteredResults.size();
          ++i)
     {
         const auto& result =
-            baselineResults[i];
+            filteredResults[i];
 
         std::cout
-            << "Window "
+            << "\nWindow "
             << (i + 1)
-            << " -> SMA "
+            << "\n";
+
+        std::cout
+            << "SMA           : "
             << result.fastPeriod
             << "/"
             << result.slowPeriod
-            << ", RSI "
+            << "\n";
+
+        std::cout
+            << "RSI Period    : "
             << result.rsiPeriod
-            << ", Threshold "
+            << "\n";
+
+        std::cout
+            << "RSI Threshold : "
             << result.rsiBuyThreshold
-            << '\n';
+            << "\n";
+
+        std::cout
+            << "ATR Period    : "
+            << result.atrPeriod
+            << "\n";
+
+        std::cout
+            << "Max ATR %     : "
+            << result.maxAtrPercentage
+            << "%\n";
+
+        std::cout
+            << "OOS P&L       : "
+            << result.testProfitLoss
+            << "\n";
+
+        std::cout
+            << "OOS Final     : "
+            << result.testFinalCapital
+            << "\n";
+
+        std::cout
+            << "OOS DD %      : "
+            << result.testMaximumDrawdownPercentage
+            << "%\n";
+
+        std::cout
+            << "OOS PF        : "
+            << result.testProfitFactor
+            << "\n";
+
+        std::cout
+            << "OOS Trades    : "
+            << result.testTrades
+            << "\n";
     }
 
     // =========================================================
-    // COST SCENARIOS
+    // COMBINED FILTERED OOS METRICS
     // =========================================================
 
-    std::vector<CostSensitivityResult> sensitivityResults;
-
-    sensitivityResults.push_back(
-        runCostScenario(
-            "Optimistic",
-            0.0005,
-            0.0002,
+    const OOSMetrics filteredMetrics =
+        calculateFilteredOOSMetrics(
             candles,
-            baselineResults,
+            filteredResults,
             initialCapital,
+            baselineFee,
+            baselineSlippage,
             stopLossPercentage,
             takeProfitPercentage
-        )
-    );
+        );
 
-    sensitivityResults.push_back(
-        runCostScenario(
-            "Current",
-            0.0010,
-            0.0005,
-            candles,
-            baselineResults,
-            initialCapital,
-            stopLossPercentage,
-            takeProfitPercentage
-        )
-    );
-
-    sensitivityResults.push_back(
-        runCostScenario(
-            "Moderate",
-            0.0015,
-            0.0010,
-            candles,
-            baselineResults,
-            initialCapital,
-            stopLossPercentage,
-            takeProfitPercentage
-        )
-    );
-
-    sensitivityResults.push_back(
-        runCostScenario(
-            "Harsh",
-            0.0020,
-            0.0015,
-            candles,
-            baselineResults,
-            initialCapital,
-            stopLossPercentage,
-            takeProfitPercentage
-        )
-    );
-
-    sensitivityResults.push_back(
-        runCostScenario(
-            "Very Harsh",
-            0.0025,
-            0.0020,
-            candles,
-            baselineResults,
-            initialCapital,
-            stopLossPercentage,
-            takeProfitPercentage
-        )
+    printOOSSummary(
+        filteredMetrics
     );
 
     // =========================================================
-    // PRINT SENSITIVITY TABLE
+    // SAVE FILTERED OOS EQUITY CURVE
+    // =========================================================
+
+    saveEquityCurve(
+        "results/volatility_filtered_oos_equity.csv",
+        filteredMetrics.equityCurve
+    );
+
+    // =========================================================
+    // SAVE WINDOW RESULTS
+    // =========================================================
+
+    saveWindowResults(
+        "results/volatility_filtered_wfv.csv",
+        filteredResults
+    );
+
+    // =========================================================
+    // PRINT WINDOW SUMMARY TABLE
     // =========================================================
 
     std::cout
         << "\n========================================\n"
-        << "       TRANSACTION COST SENSITIVITY\n"
+        << "       FILTERED OOS WINDOW SUMMARY\n"
         << "========================================\n";
 
     std::cout
@@ -607,150 +893,116 @@ int main()
         << std::setprecision(2);
 
     std::cout
-        << "\nScenario       Fee     Slip"
-        << "     Return       Final"
-        << "       DD%      Sharpe"
-        << "      PF      Expectancy   Trades\n";
+        << "\nWindow   P&L        Return      DD%      PF      Trades\n";
 
     std::cout
-        << "-------------------------------------------------------------------------------\n";
+        << "----------------------------------------------------------\n";
 
-    for (const auto& result :
-         sensitivityResults)
+    for (std::size_t i = 0;
+         i < filteredResults.size();
+         ++i)
     {
+        const auto& result =
+            filteredResults[i];
+
+        const double windowReturn =
+            (
+                (result.testFinalCapital /
+                 initialCapital)
+                - 1.0
+            ) * 100.0;
+
         std::cout
-            << std::left
-            << std::setw(15)
-            << result.name
-
-            << std::right
-            << std::setw(7)
-            << result.fee * 100.0
-
-            << std::setw(8)
-            << result.slippage * 100.0
+            << std::setw(4)
+            << (i + 1)
 
             << std::setw(12)
-            << result.returnPercentage
+            << result.testProfitLoss
 
-            << std::setw(13)
-            << result.finalCapital
-
-            << std::setw(11)
-            << result.maximumDrawdownPercentage
-
-            << std::setw(11)
-            << result.sharpeRatio
+            << std::setw(12)
+            << windowReturn
 
             << std::setw(10)
-            << result.profitFactor
+            << result.testMaximumDrawdownPercentage
 
-            << std::setw(14)
-            << result.expectancy
+            << std::setw(9)
+            << result.testProfitFactor
 
-            << std::setw(8)
-            << result.totalTrades
+            << std::setw(10)
+            << result.testTrades
 
-            << '\n';
+            << "\n";
     }
 
     // =========================================================
-    // SAVE CSV
-    // =========================================================
-
-    std::ofstream outputFile(
-        "results/cost_sensitivity.csv"
-    );
-
-    if (!outputFile)
-    {
-        std::cerr
-            << "\nError: Could not create "
-            << "results/cost_sensitivity.csv\n";
-    }
-    else
-    {
-        outputFile
-            << "scenario,fee,slippage,final_capital,"
-            << "profit_loss,return_percentage,"
-            << "maximum_drawdown,"
-            << "maximum_drawdown_percentage,"
-            << "sharpe_ratio,win_rate,expectancy,"
-            << "profit_factor,total_trades,"
-            << "winning_trades,losing_trades\n";
-
-        for (const auto& result :
-             sensitivityResults)
-        {
-            outputFile
-                << result.name
-                << ","
-                << result.fee
-                << ","
-                << result.slippage
-                << ","
-                << result.finalCapital
-                << ","
-                << result.profitLoss
-                << ","
-                << result.returnPercentage
-                << ","
-                << result.maximumDrawdown
-                << ","
-                << result.maximumDrawdownPercentage
-                << ","
-                << result.sharpeRatio
-                << ","
-                << result.winRate
-                << ","
-                << result.expectancy
-                << ","
-                << result.profitFactor
-                << ","
-                << result.totalTrades
-                << ","
-                << result.winningTrades
-                << ","
-                << result.losingTrades
-                << '\n';
-        }
-
-        outputFile.close();
-
-        std::cout
-            << "\nCost sensitivity results saved to:\n"
-            << "results/cost_sensitivity.csv\n";
-    }
-
-    // =========================================================
-    // SIMPLE INTERPRETATION
+    // FILTER STATUS
     // =========================================================
 
     std::cout
         << "\n========================================\n"
-        << "          ROBUSTNESS CHECK\n"
+        << "          FILTER STATUS\n"
         << "========================================\n";
 
-    for (const auto& result :
-         sensitivityResults)
+    std::cout
+        << "ATR-based volatility filter: ENABLED\n";
+
+    std::cout
+        << "ATR period: 14\n";
+
+    std::cout
+        << "Threshold: training 75th percentile\n";
+
+    std::cout
+        << "Threshold source: training data only\n";
+
+    std::cout
+        << "Look-ahead protection: ENABLED\n";
+
+    // =========================================================
+    // BASIC INTERPRETATION
+    // =========================================================
+
+    std::cout
+        << "\n========================================\n"
+        << "        FILTERED OOS INTERPRETATION\n"
+        << "========================================\n";
+
+    if (filteredMetrics.returnPercentage > 0.0)
     {
         std::cout
-            << result.name
-            << ": ";
-
-        if (result.returnPercentage > 0.0 &&
-            result.expectancy > 0.0 &&
-            result.profitFactor > 1.0)
-        {
-            std::cout
-                << "PROFITABLE\n";
-        }
-        else
-        {
-            std::cout
-                << "NOT PROFITABLE\n";
-        }
+            << "OOS Return: POSITIVE\n";
     }
+    else
+    {
+        std::cout
+            << "OOS Return: NEGATIVE\n";
+    }
+
+    if (filteredMetrics.profitFactor > 1.0)
+    {
+        std::cout
+            << "Profit Factor: ABOVE 1\n";
+    }
+    else
+    {
+        std::cout
+            << "Profit Factor: BELOW 1\n";
+    }
+
+    if (filteredMetrics.expectancy > 0.0)
+    {
+        std::cout
+            << "Expectancy: POSITIVE\n";
+    }
+    else
+    {
+        std::cout
+            << "Expectancy: NEGATIVE\n";
+    }
+
+    // =========================================================
+    // DONE
+    // =========================================================
 
     std::cout
         << "\n========================================\n"
@@ -759,5 +1011,3 @@ int main()
 
     return 0;
 }
-
-
