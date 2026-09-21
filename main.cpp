@@ -1,6 +1,7 @@
 #include "include/Backtester.hpp"
 #include "include/CSVReader.hpp"
 #include "include/WalkForward.hpp"
+#include "include/MonteCarlo.hpp"
 
 #include <cmath>
 #include <fstream>
@@ -1336,7 +1337,76 @@ void printCostSensitivity(
 // ================================================================
 // MAIN
 // ================================================================
+  // =========================================================
+// BUILD OOS TRADE RETURNS FOR MONTE CARLO
+// =========================================================
 
+std::vector<double> buildOOSTradeReturns(
+    const std::vector<Candle>& candles,
+    const std::vector<WalkForwardResult>& wfvResults,
+    double initialCapital,
+    double stopLossPercentage,
+    double takeProfitPercentage,
+    double tradingFeeRate,
+    double slippageRate)
+{
+    std::vector<double> tradeReturns;
+
+    for (const auto& window : wfvResults)
+    {
+        const BacktestResult result =
+            runBacktest(
+                candles,
+                StrategyType::RSI_SMA_TREND,
+
+                window.fastPeriod,
+                window.slowPeriod,
+                window.rsiPeriod,
+                window.rsiBuyThreshold,
+
+                stopLossPercentage,
+                takeProfitPercentage,
+
+                initialCapital,
+                tradingFeeRate,
+                slippageRate,
+
+                window.testStart,
+                window.testEnd,
+
+                window.atrPeriod,
+                window.maxAtrPercentage
+            );
+
+        // Each WFV test window starts with the
+        // same normalized capital.
+        double windowCapital =
+            initialCapital;
+
+        for (const auto& trade : result.trades)
+        {
+            if (windowCapital <= 0.0)
+            {
+                continue;
+            }
+
+            // Net P&L divided by capital available
+            // immediately before this trade.
+            const double tradeReturn =
+                trade.profitLoss /
+                windowCapital;
+
+            tradeReturns.push_back(
+                tradeReturn
+            );
+
+            windowCapital +=
+                trade.profitLoss;
+        }
+    }
+
+    return tradeReturns;
+}
 int main()
 {
     try
@@ -1852,7 +1922,298 @@ int main()
                 << ", Expectancy "
                 << result.expectancy
                 << '\n';
+                
         }
+        
+
+                // ============================================================
+        // MONTE CARLO / BOOTSTRAP ROBUSTNESS ANALYSIS
+        // ============================================================
+
+        std::cout
+            << "\n========================================\n"
+            << "       MONTE CARLO ROBUSTNESS\n"
+            << "========================================\n";
+
+        const std::vector<double> oosTradeReturns =
+            buildOOSTradeReturns(
+                candles,
+                filteredResults,
+                initialCapital,
+                stopLossPercentage,
+                takeProfitPercentage,
+                baselineFee,
+                baselineSlippage
+            );
+
+        std::cout
+            << "\nObserved OOS trades: "
+            << oosTradeReturns.size()
+            << '\n';
+
+        if (oosTradeReturns.empty())
+        {
+            std::cout
+                << "No OOS trades available for Monte Carlo.\n";
+        }
+        else
+        {
+            constexpr std::size_t simulations = 10000;
+
+            const MonteCarloResult monteCarlo =
+                runMonteCarlo(
+                    oosTradeReturns,
+                    initialCapital,
+                    simulations,
+                    42
+                );
+
+            std::cout
+                << "\nMonte Carlo Results:\n";
+
+            std::cout
+                << "  Simulations              : "
+                << monteCarlo.simulations
+                << '\n';
+
+            std::cout
+                << "  Trades / Simulation      : "
+                << monteCarlo.tradesPerSimulation
+                << '\n';
+
+            std::cout
+                << "  Observed Final Capital   : "
+                << monteCarlo.observedFinalCapital
+                << '\n';
+
+            std::cout
+                << "  Observed Return          : "
+                << monteCarlo.observedReturnPercentage
+                << "%\n";
+
+            std::cout
+                << "  Observed Max Drawdown    : "
+                << monteCarlo.observedMaximumDrawdownPercentage
+                << "%\n";
+
+            std::cout
+                << "\nFinal Capital Distribution:\n";
+
+            std::cout
+                << "  Mean                     : "
+                << monteCarlo.meanFinalCapital
+                << '\n';
+
+            std::cout
+                << "  Median                   : "
+                << monteCarlo.medianFinalCapital
+                << '\n';
+
+            std::cout
+                << "  5th Percentile           : "
+                << monteCarlo.percentile5FinalCapital
+                << '\n';
+
+            std::cout
+                << "  95th Percentile          : "
+                << monteCarlo.percentile95FinalCapital
+                << '\n';
+
+            std::cout
+                << "\nReturn Distribution:\n";
+
+            std::cout
+                << "  Mean                     : "
+                << monteCarlo.meanReturnPercentage
+                << "%\n";
+
+            std::cout
+                << "  Median                   : "
+                << monteCarlo.medianReturnPercentage
+                << "%\n";
+
+            std::cout
+                << "  5th Percentile           : "
+                << monteCarlo.percentile5ReturnPercentage
+                << "%\n";
+
+            std::cout
+                << "  95th Percentile          : "
+                << monteCarlo.percentile95ReturnPercentage
+                << "%\n";
+
+            std::cout
+                << "\nDrawdown Distribution:\n";
+
+            std::cout
+                << "  Median                   : "
+                << monteCarlo.medianMaximumDrawdownPercentage
+                << "%\n";
+
+            std::cout
+                << "  95th Percentile          : "
+                << monteCarlo.percentile95MaximumDrawdownPercentage
+                << "%\n";
+
+            std::cout
+                << "  Worst Simulation         : "
+                << monteCarlo.worstMaximumDrawdownPercentage
+                << "%\n";
+
+            std::cout
+                << "\nProbability Analysis:\n";
+
+            std::cout
+                << "  Probability of Profit    : "
+                << monteCarlo.probabilityOfProfit
+                << "%\n";
+
+            std::cout
+                << "  Probability of Loss      : "
+                << monteCarlo.probabilityOfLoss
+                << "%\n";
+
+            std::cout
+                << "  DD > 10%                 : "
+                << monteCarlo.probabilityDrawdownAbove10
+                << "%\n";
+
+            std::cout
+                << "  DD > 15%                 : "
+                << monteCarlo.probabilityDrawdownAbove15
+                << "%\n";
+
+            std::cout
+                << "  DD > 20%                 : "
+                << monteCarlo.probabilityDrawdownAbove20
+                << "%\n";
+
+            // ========================================================
+            // SAVE MONTE CARLO SUMMARY
+            // ========================================================
+
+            std::ofstream monteCarloFile(
+                "results/monte_carlo_summary.csv"
+            );
+
+            monteCarloFile
+                << "metric,value\n";
+
+            monteCarloFile
+                << "simulations,"
+                << monteCarlo.simulations
+                << '\n';
+
+            monteCarloFile
+                << "trades_per_simulation,"
+                << monteCarlo.tradesPerSimulation
+                << '\n';
+
+            monteCarloFile
+                << "observed_final_capital,"
+                << monteCarlo.observedFinalCapital
+                << '\n';
+
+            monteCarloFile
+                << "observed_return_percentage,"
+                << monteCarlo.observedReturnPercentage
+                << '\n';
+
+            monteCarloFile
+                << "observed_maximum_drawdown_percentage,"
+                << monteCarlo.observedMaximumDrawdownPercentage
+                << '\n';
+
+            monteCarloFile
+                << "mean_final_capital,"
+                << monteCarlo.meanFinalCapital
+                << '\n';
+
+            monteCarloFile
+                << "median_final_capital,"
+                << monteCarlo.medianFinalCapital
+                << '\n';
+
+            monteCarloFile
+                << "percentile_5_final_capital,"
+                << monteCarlo.percentile5FinalCapital
+                << '\n';
+
+            monteCarloFile
+                << "percentile_95_final_capital,"
+                << monteCarlo.percentile95FinalCapital
+                << '\n';
+
+            monteCarloFile
+                << "mean_return_percentage,"
+                << monteCarlo.meanReturnPercentage
+                << '\n';
+
+            monteCarloFile
+                << "median_return_percentage,"
+                << monteCarlo.medianReturnPercentage
+                << '\n';
+
+            monteCarloFile
+                << "percentile_5_return_percentage,"
+                << monteCarlo.percentile5ReturnPercentage
+                << '\n';
+
+            monteCarloFile
+                << "percentile_95_return_percentage,"
+                << monteCarlo.percentile95ReturnPercentage
+                << '\n';
+
+            monteCarloFile
+                << "median_maximum_drawdown_percentage,"
+                << monteCarlo.medianMaximumDrawdownPercentage
+                << '\n';
+
+            monteCarloFile
+                << "percentile_95_maximum_drawdown_percentage,"
+                << monteCarlo.percentile95MaximumDrawdownPercentage
+                << '\n';
+
+            monteCarloFile
+                << "worst_maximum_drawdown_percentage,"
+                << monteCarlo.worstMaximumDrawdownPercentage
+                << '\n';
+
+            monteCarloFile
+                << "probability_of_profit,"
+                << monteCarlo.probabilityOfProfit
+                << '\n';
+
+            monteCarloFile
+                << "probability_of_loss,"
+                << monteCarlo.probabilityOfLoss
+                << '\n';
+
+            monteCarloFile
+                << "probability_drawdown_above_10,"
+                << monteCarlo.probabilityDrawdownAbove10
+                << '\n';
+
+            monteCarloFile
+                << "probability_drawdown_above_15,"
+                << monteCarlo.probabilityDrawdownAbove15
+                << '\n';
+
+            monteCarloFile
+                << "probability_drawdown_above_20,"
+                << monteCarlo.probabilityDrawdownAbove20
+                << '\n';
+
+            monteCarloFile.close();
+
+            std::cout
+                << "\nMonte Carlo summary saved to: "
+                << "results/monte_carlo_summary.csv\n";
+        }
+
+        // ============================================================
+        // FINAL STATUS
+        // ============================================================
 
         std::cout
             << "\n========================================\n"
@@ -1867,6 +2228,8 @@ int main()
             << '\n';
 
         return 1;
+
+
     }
 
     return 0;
